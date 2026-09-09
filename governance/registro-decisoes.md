@@ -87,6 +87,21 @@ empty the rule out.
 not configured, and the record still checks numbering, drafts, signers and SHAs. Turn the layer on
 when you have a key; do not claim it before then.
 
+A third optional file makes the record itself demand the key, frontier or no frontier:
+
+```
+governance/exigencia-de-chave.txt
+```
+
+Its first non-comment line must read `decisao-assinada-exige-G`. With it present, a row marked
+`vigente` whose signing commit has no `G` signature **fails**, whether or not a commit cites it —
+and so does a `Decision:` trailer pointing at such a row. The file is a statement each instance
+makes about itself: *"this instance requires G on the signature of a decision."* It is not
+shipped, it is not assumed, and without it an unsigned signing commit stays a warning, exactly as
+above. The frontier is about history; this is about the decision. Declare it the day your own
+signing commits carry a trusted key, and not before — a declared requirement your own rows do
+not meet fails your build, which is the point.
+
 One CI detail that costs an afternoon if missed: the frontier check needs history deep enough to
 reach the frontier commit. A shallow clone cannot, and the validator says so rather than passing
 in silence. In GitHub Actions the fix is `fetch-depth: 0` on the checkout step.

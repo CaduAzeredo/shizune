@@ -1,16 +1,18 @@
 // validate-decisions.mjs — o CI recusa commit que cita decisão inexistente ou não assinada.
 //
-// uso: node scripts/validate-decisions.mjs [--desde=<ref>] [--registro=<caminho>]
+// uso: node scripts/validate-decisions.mjs [--desde=<ref>] [--registro=<caminho>] [--exigir-chave]
 //      node scripts/validate-decisions.mjs --texto=<arquivo>   (modo fixture, para teste)
 //
 // Responde por comando à pergunta que o Shizune vende: "esta mudança está
 // amparada por qual decisão, e quem assinou?". Lê o trailer `Decision: DEC-NNN`
 // das mensagens de commit e confronta com governance/registro-decisoes.md.
 //
-// Reprova em três casos:
+// Reprova em quatro casos:
 //   1. o commit cita um DEC que não existe na tabela
 //   2. o DEC existe mas não tem assinante
 //   3. o DEC tem SHA de assinatura que não resolve nesta árvore
+//   4. a instância declarou governance/exigencia-de-chave.txt e a assinatura
+//      de um DEC vigente não tem chave confiável (%G? = G) — com ou sem fronteira
 //
 // Nota de manutenção: as expressões abaixo são LITERAIS de propósito. Montar
 // regex a partir de string já custou um bug silencioso: um validador irmão
@@ -94,19 +96,63 @@ function shaResolve(sha) {
   }
 }
 
-function assinaturaCriptografica(sha) {
+// O código de assinatura do git para um commit. Só `G` significa "assinatura
+// boa POR CHAVE CONFIÁVEL". `U` é assinatura boa de chave fora da lista de
+// confiança — "alguém assinou", não "o dono do repositório assinou" — e por
+// isso não conta como chave em lugar nenhum deste validador. A primeira versão
+// aceitava U aqui, o que esvaziava a regra na camada que mais importa.
+function codigoAssinatura(sha) {
   try {
-    const g = execFileSync("git", ["-C", ARVORE, "log", "-1", "--format=%G?", sha], {
+    return execFileSync("git", ["-C", ARVORE, "log", "-1", "--format=%G?", sha], {
       stdio: ["ignore", "pipe", "ignore"],
     })
       .toString()
       .trim();
-    // G=boa, U=boa mas não confiável, B=ruim, E=erro, N=nenhuma
-    return g === "G" || g === "U";
   } catch {
-    return false;
+    return "?";
   }
 }
+
+const EXPLICA = {
+  U: "assinatura boa, mas a chave não está na lista de confiança — falta gpg.ssh.allowedSignersFile apontando para .github/allowed_signers, ou a chave não está nele",
+  N: "o git não enxergou assinatura nenhuma — o commit não foi assinado, ou o git do ambiente não reconhece este formato de assinatura",
+  E: "a assinatura não pôde ser checada — ferramenta de verificação ausente no ambiente (ssh-keygen)",
+  B: "assinatura RUIM — o conteúdo não confere com a assinatura",
+  X: "assinatura boa, de chave expirada",
+  Y: "assinatura boa, de chave que expirou depois",
+  R: "assinatura boa, de chave revogada",
+  "?": "o commit não pôde ser lido nesta árvore",
+};
+
+// --- exigência de chave na assinatura de decisão ----------------------------
+//
+// A instância pode declarar que assinar uma decisão exige chave: a linha do
+// registro em estado vigente só vale se o commit que ela aponta tiver
+// assinatura verificada por chave confiável (%G? = G) — com ou sem fronteira de
+// autoria, porque a fronteira é sobre a história e isto é sobre a decisão.
+//
+// A exigência NÃO mora neste script, pela mesma razão da fronteira: o script é
+// publicado, e um clone de terceiro que assina a sua primeira decisão sem chave
+// nasceria vermelho por uma regra que ninguém ali decidiu. Reproduzido em
+// 2026-09-05 — pacote exportado, diretório limpo, sem configuração global:
+// exit 1 na primeira decisão. A instância declara a sua em
+// governance/exigencia-de-chave.txt, que a allowlist de export não leva. Sem o
+// arquivo e sem --exigir-chave, commit de assinatura sem G é AVISO, como sempre
+// foi. Arquivo presente com conteúdo que não é o token reprova: uma exigência
+// que ninguém entende não pode passar por "não declarada".
+const TOKEN_EXIGENCIA = "decisao-assinada-exige-G";
+const ARQ_EXIGENCIA = path.resolve(ARVORE, "governance/exigencia-de-chave.txt");
+const exigenciaDoArquivo = () => {
+  if (!fs.existsSync(ARQ_EXIGENCIA)) return null;
+  const l = fs
+    .readFileSync(ARQ_EXIGENCIA, "utf8")
+    .split(/\r?\n/)
+    .map((x) => x.trim())
+    .filter((x) => x && !x.startsWith("#"));
+  return l[0] || "";
+};
+const DECLARACAO = exigenciaDoArquivo();
+const EXIGE_CHAVE = process.argv.includes("--exigir-chave") || DECLARACAO === TOKEN_EXIGENCIA;
 
 // --- coleta das citações -----------------------------------------------------
 
@@ -178,10 +224,17 @@ for (const { origem, dec } of citacoes) {
     falhas++;
     continue;
   }
-  if (assinaturaCriptografica(linha.assinatura)) {
-    saida.push(`ok          ${origem} cita ${dec} — assinado por ${linha.assinante}, commit assinado por chave`);
+  const g = codigoAssinatura(linha.assinatura);
+  if (g === "G") {
+    saida.push(`ok          ${origem} cita ${dec} — assinado por ${linha.assinante}, commit assinado por chave confiável`);
+  } else if (EXIGE_CHAVE) {
+    saida.push(
+      `FALHA       ${origem} cita ${dec} — a assinatura ${linha.assinatura} não tem chave confiável. ` +
+        `Esta instância exige G na assinatura de decisão (governance/exigencia-de-chave.txt). git %G? = "${g}": ${EXPLICA[g] || "código não reconhecido"}`,
+    );
+    falhas++;
   } else {
-    saida.push(`ok          ${origem} cita ${dec} — assinado por ${linha.assinante} (commit sem chave)`);
+    saida.push(`ok          ${origem} cita ${dec} — assinado por ${linha.assinante} (commit sem chave confiável: %G? = ${g})`);
     semChave++;
   }
 }
@@ -236,21 +289,10 @@ if (!TEXTO && !FRONTEIRA) {
     } catch {
       /* sem histórico utilizável: a checagem acima já cobre */
     }
-    // Só `G` conta: assinatura boa POR CHAVE CONFIÁVEL. `U` é assinatura boa de
-    // chave que não está na lista de confiança — ou seja, "alguém assinou", não
-    // "o dono do repositório assinou", e a fronteira é sobre autoria. Aceitar U
-    // esvaziaria a regra. Isto só é exigível porque a lista de confiança passou
-    // a viver NO REPOSITÓRIO (.github/allowed_signers); antes dela, exigir G
-    // seria pedir ao CI algo que ele não tinha como saber.
-    const EXPLICA = {
-      U: "assinatura boa, mas a chave não está na lista de confiança — falta gpg.ssh.allowedSignersFile apontando para .github/allowed_signers, ou a chave não está nele",
-      N: "o git não enxergou assinatura nenhuma — o commit não foi assinado, ou o git do ambiente não reconhece este formato de assinatura",
-      E: "a assinatura não pôde ser checada — ferramenta de verificação ausente no ambiente (ssh-keygen)",
-      B: "assinatura RUIM — o conteúdo não confere com a assinatura",
-      X: "assinatura boa, de chave expirada",
-      Y: "assinatura boa, de chave que expirou depois",
-      R: "assinatura boa, de chave revogada",
-    };
+    // Só `G` conta — ver codigoAssinatura() e EXPLICA no topo. Isto só é
+    // exigível porque a lista de confiança passou a viver NO REPOSITÓRIO
+    // (.github/allowed_signers); antes dela, exigir G seria pedir ao CI algo
+    // que ele não tinha como saber.
     const linhas = bruto.split("\n").filter((x) => x.trim());
     let assinados = 0;
     for (const l of linhas) {
@@ -317,7 +359,34 @@ for (const [dec, linha] of registro) {
   } else if (!shaResolve(linha.assinatura)) {
     saida.push(`FALHA       ${dec} no registro — assinatura "${linha.assinatura || "(vazia)"}" não resolve`);
     falhas++;
+  } else if (EXIGE_CHAVE && !TEXTO) {
+    // Com a exigência declarada, a linha vigente é checada mesmo sem citação:
+    // uma decisão "assinada" por commit sem chave é o defeito, haja ou não
+    // commit se apoiando nela. Em modo fixture (--texto) a árvore é a do teste
+    // e as linhas já são conferidas pela citação.
+    const g = codigoAssinatura(linha.assinatura);
+    if (g !== "G") {
+      saida.push(
+        `FALHA       ${dec} no registro — a assinatura ${linha.assinatura} não tem chave confiável. ` +
+          `Esta instância exige G na assinatura de decisão (governance/exigencia-de-chave.txt). git %G? = "${g}": ${EXPLICA[g] || "código não reconhecido"}`,
+      );
+      falhas++;
+    }
   }
+}
+
+if (DECLARACAO !== null && DECLARACAO !== TOKEN_EXIGENCIA) {
+  saida.push(
+    `FALHA       governance/exigencia-de-chave.txt existe mas a primeira linha útil é "${DECLARACAO}", ` +
+      `não "${TOKEN_EXIGENCIA}". Exigência declarada e não reconhecida não pode passar por "não declarada".`,
+  );
+  falhas++;
+}
+if (EXIGE_CHAVE) {
+  saida.push(
+    `exigência   esta instância exige G na assinatura de decisão` +
+      (DECLARACAO === TOKEN_EXIGENCIA ? " (governance/exigencia-de-chave.txt)" : " (--exigir-chave)"),
+  );
 }
 
 console.log(`validate-decisions — registro: ${path.relative(RAIZ, REGISTRO)}`);
@@ -338,9 +407,9 @@ if (rascunhos) {
 }
 if (semChave) {
   console.log(
-    `Aviso: ${semChave} citação(ões) apontam para commit sem assinatura de chave. ` +
-      `Isto NÃO reprova hoje — a exigência entra quando o operador tiver chave configurada. ` +
-      `Até lá, nenhum material público pode chamar esta camada de "assinatura criptográfica verificada".`,
+    `Aviso: ${semChave} citação(ões) apontam para commit sem assinatura de chave confiável. ` +
+      `Isto NÃO reprova hoje: esta instância não declarou a exigência em governance/exigencia-de-chave.txt. ` +
+      `Até declarar, nenhum material público pode chamar esta camada de "assinatura criptográfica verificada".`,
   );
 }
 process.exit(falhas ? 1 : 0);

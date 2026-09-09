@@ -3,7 +3,7 @@ id: indice-skills
 tipo: indice
 projeto: global
 status: vigente
-data: 2026-09-03
+data: 2026-09-04
 autor: shizune
 ---
 <!-- GERADO por scripts/build-index.mjs — não editar à mão -->

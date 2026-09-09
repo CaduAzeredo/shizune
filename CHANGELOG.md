@@ -4,7 +4,19 @@ Version history of the Brain Framework. Format: [Keep a Changelog](https://keepa
 
 ## [Unreleased]
 
-Nothing yet.
+## [0.4.0] - 2026-09-09
+
+**Why 0.4.0 and not 0.3.2.** The rule this project wrote for itself in DEC-015, the day 0.3.0 shipped, was "new capability, not a fix". This release does not rest on that rule. The operator does not count the optional key requirement below as new capability for versioning purposes — it is declared by the instance and ships off by default — and the other entries are corrections. What this version marks is the first line of the README. The operator's decision is that **a change in the public category of the project counts as a milestone**: a package whose first claim changed is not the same package with a patch. Written here so the next release has a criterion to read: a fix is a patch; a new capability, or a change in what the project says it is, is a minor.
+
+### Changed
+
+- **The opening line of the README now names the category this project actually belongs to: auditable decision governance.** It used to say "a governance operating system for AI agents", which put the agent in the subject position — as if the agent were the thing being governed. What is governed here is the decision: who took it, under which record, and whether the command can verify it. The agent is the context that makes the question urgent, not its object. The wording was fixed by a signed decision in the private instance this package is exported from, and the change ships as a release rather than a silent edit, because the first line of a README is a claim and claims get a changelog entry.
+- **The decision record can now demand a trusted-key signature — and the demand is yours to declare, not ours to ship.** `scripts/validate-decisions.mjs` reads an optional `governance/exigencia-de-chave.txt`; with it present, a `vigente` row whose signing commit has no `G` signature fails, frontier or no frontier, cited or not. Without it, nothing changes: an unsigned signing commit stays a warning. The file is deliberately not part of this package. We reproduced the alternative before rejecting it: exported this package to a clean directory with no global git configuration, signed a first test decision the way any new instance would, and the hardened validator went red on that first decision (`exit 1`). A rule nobody in that repository decided is exactly the defect this validator exists to catch, so the rule lives in the instance, next to the frontier. Negative tests cover both halves.
+- **A good signature from a key outside the trust list (`U`) no longer counts as "signed by key" anywhere in the validator.** It said "somebody signed", not "the repository owner signed"; the frontier check already refused it, the row check did not.
+
+### Fixed
+
+- **`scripts/checar-nome.sh` no longer reports a registered `.co` domain as free.** `.co` has no RDAP server anywhere — zero entries in the IANA bootstrap, measured 2026-09-05 — so by RDAP every registered `.co` came back FREE, which is how the name battery of 2026-09-02 missed `shizune.co`, which was live. For TLDs without RDAP the script now asks DNS for an `NS` record: `NS` present proves the name is taken; `NS` absent does **not** prove it is free (a registered domain with no zone answers nothing either), and the script prints `?ns` instead of a verdict. A one-sided signal, declared as one-sided.
 
 ## [0.3.1] - 2026-09-03
 

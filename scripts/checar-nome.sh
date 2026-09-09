@@ -23,15 +23,26 @@
 #      falhou) e a resposta correta. Uma execução isolada não decide nada:
 #      cada consulta é repetida até obter um código terminal.
 #
+#   4. .co NÃO TEM servidor RDAP em lugar nenhum (medido em 2026-09-05: zero
+#      ocorrências de "co" no bootstrap da IANA, data.iana.org/rdap/dns.json;
+#      rdap.nic.co não resolve; rdap.org devolve 404 para stripe.co). É o
+#      defeito 1 de novo, e desta vez sem registro para onde desviar: por RDAP,
+#      todo .co ocupado sairia LIVRE. Foi assim que a bateria de 2026-09-02
+#      não pegou shizune.co, que estava no ar. Por isso .co é consultado por
+#      DNS (registro NS via nslookup): NS presente prova ocupado; NS ausente
+#      NÃO prova livre — domínio registrado e sem zona também não responde —
+#      e sai como "?ns". Sinal de um lado só, declarado como tal.
+#
 # Daí a regra desta saída: só 404 vira LIVRE e só 200 vira reg. Qualquer outro
 # código aparece como "?<codigo>" — desconhecido é desconhecido, nunca "livre".
-# `?` numa coluna significa "refazer a consulta", nunca "pode usar".
+# `?` numa coluna significa "refazer a consulta", nunca "pode usar". Na coluna
+# .co não existe LIVRE: o máximo que ela afirma é "reg" ou "?ns".
 #
 # TESTE NEGATIVO OBRIGATÓRIO, antes de confiar em qualquer resultado:
 #   bash scripts/checar-nome.sh stripe
-# tem de dar "reg" em .com, .io, .dev e .app. LIVRE ou "?" em qualquer coluna
-# significa checador quebrado ou instável, e nenhum resultado dele pode ser
-# usado enquanto não sair limpo.
+# tem de dar "reg" em .com, .io, .dev, .app e .co. LIVRE ou "?" em qualquer
+# coluna significa checador quebrado ou instável, e nenhum resultado dele pode
+# ser usado enquanto não sair limpo.
 
 TENTATIVAS=4
 
@@ -51,7 +62,17 @@ rotular() {
   case "$1" in 404) echo LIVRE ;; 200) echo reg ;; *) echo "?$1" ;; esac
 }
 
-printf "%-9s %-8s %-6s %-6s %-6s %-6s\n" nome npm .com .io .dev .app
+# .co por DNS (defeito 4): "reg" se o domínio tem registro NS, "?ns" se não tem
+# ou se a consulta falhou. Nunca LIVRE. nslookup existe no Windows e na maioria
+# dos Linux; sem ele, a coluna diz "?tool" em vez de fingir que consultou.
+consultar_ns() {
+  local dom="$1" saida
+  command -v nslookup >/dev/null 2>&1 || { echo "?tool"; return; }
+  saida=$(nslookup -type=NS "$dom" 2>&1)
+  if printf '%s' "$saida" | grep -qi "nameserver = "; then echo reg; else echo "?ns"; fi
+}
+
+printf "%-9s %-8s %-6s %-6s %-6s %-6s %-6s\n" nome npm .com .io .dev .app .co
 for n in "$@"; do
   npm_c=$(consultar "https://registry.npmjs.org/$n")
   case "$npm_c" in 404) npm=LIVRE ;; 200) npm=ocup ;; *) npm="?$npm_c" ;; esac
@@ -60,6 +81,7 @@ for n in "$@"; do
     eval "d_$tld=$(rotular "$(consultar "https://rdap.org/domain/$n.$tld")")"
   done
   d_io=$(rotular "$(consultar "https://rdap.identitydigital.services/rdap/domain/$n.io")")
+  d_co=$(consultar_ns "$n.co")
 
-  printf "%-9s %-8s %-6s %-6s %-6s %-6s\n" "$n" "$npm" "$d_com" "$d_io" "$d_dev" "$d_app"
+  printf "%-9s %-8s %-6s %-6s %-6s %-6s %-6s\n" "$n" "$npm" "$d_com" "$d_io" "$d_dev" "$d_app" "$d_co"
 done

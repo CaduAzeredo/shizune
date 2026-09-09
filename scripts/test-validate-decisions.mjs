@@ -155,6 +155,57 @@ try {
 
   console.log("\n[guarda] o aviso de chave é aviso, não reprovação\n");
   ok(/NÃO reprova hoje/.test(rodar(bom, "x\n\nDecision: DEC-001\n").saida), "avisou sobre commit sem chave sem reprovar");
+
+  console.log("\n[exigência] a instância declara que assinar decisão exige chave — e só então reprova\n");
+
+  // Reproduzido em 2026-09-05: no pacote exportado para um diretório limpo, sem
+  // configuração global, exigir G dentro do script deixava o clone de terceiro
+  // vermelho na primeira decisão. Por isso a exigência é declarada pela
+  // instância, e este bloco cobra as duas metades: sem declaração, aviso (o
+  // caso acima); com declaração, reprovação — com ou sem fronteira.
+  const rodarSemFixture = (registro, ...extras) => {
+    const f = path.join(tmp, "reg-exig.md");
+    fs.writeFileSync(f, registro, "utf8");
+    const rr = spawnSync(process.execPath, [VALIDADOR, `--registro=${f}`, `--arvore=${tmp}`, ...extras], {
+      encoding: "utf8",
+    });
+    return { code: rr.status, saida: (rr.stdout || "") + (rr.stderr || "") };
+  };
+
+  // (a) pela flag, citação de DEC vigente cujo commit não tem chave: reprova
+  r = rodar(bom, "x\n\nDecision: DEC-001\n");
+  const rFlag = spawnSync(
+    process.execPath,
+    [VALIDADOR, `--registro=${path.join(tmp, "reg.md")}`, `--texto=${path.join(tmp, "msg.txt")}`, `--arvore=${tmp}`, "--exigir-chave"],
+    { encoding: "utf8" },
+  );
+  const saidaFlag = (rFlag.stdout || "") + (rFlag.stderr || "");
+  ok(r.code === 0 && rFlag.status === 1, "a mesma citação passa sem exigência e reprova com --exigir-chave");
+  ok(/não tem chave confiável/.test(saidaFlag), "explicou que falta chave confiável");
+  ok(/esta instância exige G/.test(saidaFlag), "atribuiu a exigência à instância, não ao framework");
+  ok(/%G\? = "N"/.test(saidaFlag), "imprimiu o código %G? do commit reprovado");
+
+  // (b) pelo arquivo, linha vigente sem chave reprova MESMO SEM citação — e sem fronteira
+  const dirGov = path.join(tmp, "governance");
+  fs.mkdirSync(dirGov, { recursive: true });
+  const fExig = path.join(dirGov, "exigencia-de-chave.txt");
+  fs.writeFileSync(fExig, "# comentário\n\ndecisao-assinada-exige-G\n", "utf8");
+  r = rodarSemFixture(bom);
+  ok(r.code === 1, "linha vigente sem chave reprova com o arquivo declarado, sem citação e sem fronteira");
+  ok(/exigência\s+esta instância exige G/.test(r.saida), "anunciou a exigência declarada pelo arquivo");
+  ok(/DEC-001 no registro — a assinatura/.test(r.saida), "apontou a linha do registro, não uma citação");
+
+  // (c) arquivo presente com conteúdo errado não passa por "não declarado"
+  fs.writeFileSync(fExig, "exige-chave-por-favor\n", "utf8");
+  r = rodarSemFixture(bom);
+  ok(r.code === 1, "arquivo com token desconhecido reprova");
+  ok(/não reconhecida/.test(r.saida), "explicou que a exigência declarada não foi reconhecida");
+
+  // (d) sem o arquivo, volta ao aviso — a ausência não reprova
+  fs.rmSync(fExig);
+  r = rodarSemFixture(bom);
+  ok(r.code === 0, "sem o arquivo, a mesma linha volta a passar");
+  ok(!/exigência\s+esta instância/.test(r.saida), "não anunciou exigência que não existe");
 } finally {
   try {
     fs.rmSync(tmp, { recursive: true, force: true });

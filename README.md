@@ -2,7 +2,7 @@
 
 # Shizune
 
-**A governance operating system for AI agents.**
+**Auditable decision governance for work done with AI agents.**
 
 Give a coding agent trustworthy context, a named skill pipeline and verifiable writing rules — before it touches any code.
 
@@ -32,7 +32,7 @@ Then fill in `projects/my-project/CONTEXT.md`, starting from the `grill-with-doc
 
 **No `bun install`, no `npm install`.** The framework has **zero dependencies**: the scripts use only builtins and there is no `package.json`. That is deliberate — it runs on any machine with a JS runtime, with no install step. You need **Bun** (recommended) or **Node.js 20+**, and **git**.
 
-> **Language, v0.3.** The public surface — this README, the quickstart, the agent contract, the contributing guide and the worked example — is written in English. `skills/` and `templates/` are still in Brazilian Portuguese in this release, and so are the frontmatter field names (`tipo`, `projeto`, `data`, `autor`). Translating them is tracked in the [translation issue](https://github.com/CaduAzeredo/shizune/issues/new?template=translation.yml), and this note carries no date for it: v0.2 promised the translation for "the next release", v0.3 shipped without it, and repeating the promise would be worth less than saying plainly that it is open. Folder and file names are mostly English; a few structural names are still Portuguese (`templates/projeto/`, and the frontmatter fields above), and they are part of the same translation pass. The framework works in either language, and we would rather ship the machinery than hold it back for a translation pass.
+> **Language, v0.4.** The public surface — this README, the quickstart, the agent contract, the contributing guide and the worked example — is written in English. `skills/` and `templates/` are still in Brazilian Portuguese in this release, and so are the frontmatter field names (`tipo`, `projeto`, `data`, `autor`). Translating them is tracked in the [translation issue](https://github.com/CaduAzeredo/shizune/issues/new?template=translation.yml), and this note carries no date for it: v0.2 promised the translation for "the next release", v0.3 and v0.4 shipped without it, and repeating the promise would be worth less than saying plainly that it is open. Folder and file names are mostly English; a few structural names are still Portuguese (`templates/projeto/`, and the frontmatter fields above), and they are part of the same translation pass. The framework works in either language, and we would rather ship the machinery than hold it back for a translation pass.
 
 ## Why it exists
 
