@@ -32,7 +32,7 @@ Then fill in `projects/my-project/CONTEXT.md`, starting from the `grill-with-doc
 
 **No `bun install`, no `npm install`.** The framework has **zero dependencies**: the scripts use only builtins and there is no `package.json`. That is deliberate — it runs on any machine with a JS runtime, with no install step. You need **Bun** (recommended) or **Node.js 20+**, and **git**.
 
-> **Language, v0.4.** The public surface — this README, the quickstart, the agent contract, the contributing guide and the worked example — is written in English. `skills/` and `templates/` are still in Brazilian Portuguese in this release, and so are the frontmatter field names (`tipo`, `projeto`, `data`, `autor`). Translating them is tracked in the [translation issue](https://github.com/CaduAzeredo/shizune/issues/new?template=translation.yml), and this note carries no date for it: v0.2 promised the translation for "the next release", v0.3 and v0.4 shipped without it, and repeating the promise would be worth less than saying plainly that it is open. Folder and file names are mostly English; a few structural names are still Portuguese (`templates/projeto/`, and the frontmatter fields above), and they are part of the same translation pass. The framework works in either language, and we would rather ship the machinery than hold it back for a translation pass.
+> **Language, v0.4.** The public surface — this README, the quickstart, the agent contract, the contributing guide and the worked example — is written in English. `skills/` and `templates/` are still in Brazilian Portuguese in this release, and so are the frontmatter field names (`tipo`, `projeto`, `data`, `autor`). Translating them is tracked in the [translation issue](https://github.com/CaduAzeredo/shizune/issues/new?template=translation.yml), and this note carries no date for it: v0.2 promised the translation for "the next release", v0.3 and v0.4 shipped without it, and repeating the promise would be worth less than saying plainly that it is open. Folder and file names are mostly English; a few structural names are still Portuguese (`templates/projeto/`, and the frontmatter fields above), and they are part of the same translation pass. The framework works in either language, and we would rather ship the machinery than hold it back for a translation pass. **The validators also print in Brazilian Portuguese**, which includes the lines your CI log will show: `LC_ALL` and `LANG` are not consulted, and the output is byte-identical under any locale (measured 2026-09-09 on the public clone at `v0.4.0`). Whether that becomes translated output or a real locale layer is an open decision, and this note carries no date for it either.
 
 ## Why it exists
 
@@ -73,6 +73,16 @@ AI agents degrade without structure. With no explicit contract, every session re
 | `scripts/` | `doctor.mjs` (runs every check in one command), `new-project.mjs` (scaffolding), `validate-structure.mjs`, `validate-links.mjs`, `build-index.mjs` and `export-public.mjs`. |
 | `examples/` | A complete synthetic project example (`course-platform-demo/` — context, domain, spec, tickets and a handoff pair). |
 | `AGENTS.md` | The operating contract every agent reads first. |
+
+## Does anything leave your machine?
+
+No. There is no telemetry, no analytics, no phone-home and no account. There are no dependencies to install, so nothing is fetched at run time either: every script uses only the runtime's builtins. Reproduce that rather than trusting the paragraph:
+
+```bash
+grep -rn "fetch(\|node:http\|node:https\|node:net\|node:dns" scripts/*.mjs
+```
+
+The one script that does reach the network is `scripts/checar-nome.sh`, a name-and-domain availability checker that queries RDAP and DNS. It is not part of `doctor.mjs`, it runs only when you run it, and what it sends is the name you asked about — nothing else from your tree.
 
 ## Basic use — technical audit of a project
 
@@ -128,6 +138,18 @@ Public evidence on a real open source codebase is planned and has not been produ
 ## Skill format
 
 Skills follow the **Agent Skills** format: each skill is a folder containing a `SKILL.md` whose frontmatter opens with `name` and `description` — that is what lets an agent discover and load the skill on demand. In Shizune, the same frontmatter block also carries the framework governance fields, so skills are governed documents like any other.
+
+## If this project stops
+
+One person maintains it. There is no company behind it, no support contract and no service level — and a README implying otherwise would be the first thing this framework asks you not to do.
+
+What that costs you is bounded by design. The artifacts are Markdown and git: your decisions, contexts and records are readable with no tool of ours, and they outlive any decision made here. The scripts are Apache 2.0 with zero dependencies, so a fork needs nothing but a runtime. If work here stops, what you have keeps working.
+
+## Getting out, and getting big
+
+**Getting out** costs one delete. Remove `scripts/` and you are left with Markdown documents in folders, inside a git history that is yours — no database, no proprietary format, no export step. The only convention that survives is the frontmatter block at the top of each file, and it is six plain fields.
+
+**Getting big** has an honest unmeasured edge. Every validator walks the whole tree on every run: there is no cache and no incremental mode. On a repository the size of the one this was extracted from, `doctor` finishes in seconds. It has **not** been measured on a large monorepo, and until it is, that number is a hypothesis and does not get published here.
 
 ## Using this commercially
 

@@ -18,6 +18,35 @@ cd shizune
 
 If you would rather start without history, copy the files and run `git init` in the folder.
 
+## 2b. Adopting Shizune in a repository that already exists
+
+The step above assumes an empty folder. Most repositories are not empty. Two layouts work,
+and they differ in one thing only: **which history `git log` reads.**
+
+**Inside the code repository, as a subfolder.** Copy the framework into `shizune/` at the
+root of your project and commit it there. Every script resolves its own root as the parent
+of `scripts/`, so they operate on `shizune/` and leave the rest of your tree alone — and
+because that folder sits inside your repository, `validate-decisions.mjs` reads the history
+of the code itself. The `Decision:` trailer in your commits and the record that answers for
+it live in the same history. This is the layout to prefer, and it behaves the same whether
+you run the script from the repository root or from inside `shizune/`:
+
+```bash
+node shizune/scripts/validate-decisions.mjs   # from the repository root
+cd shizune && node scripts/validate-decisions.mjs
+```
+
+**Beside it, as a separate repository.** Keep governance in its own repository. This leaves
+the code tree untouched, and it costs the thing the layer exists for: the validator now
+reads the governance repository's history, where your code commits are not. A trailer
+written in a code commit is invisible to a validator running next door. If you choose this,
+run the decision check in the code repository's CI instead, with `--arvore` pointing at the
+code checkout.
+
+Either way, `validate-structure.mjs` enforces an allowlist at the Shizune root. Files of
+yours that are not part of the framework belong outside that folder, or the check will
+report them.
+
 ## 3. Scaffold a project
 
 ```bash
@@ -72,6 +101,56 @@ Only a good signature **from a key on that list** counts. "Somebody signed" is n
 If neither file exists nothing fails: the validator warns that no frontier is configured and still checks numbering, drafts, signers and SHAs. Turn the layer on when you have a key — and do not describe your record as cryptographically verified before then. Claiming more than the check performs is the defect this framework exists to catch.
 
 In CI, check out with full history (`fetch-depth: 0`); a shallow clone cannot reach the frontier commit, and the check is skipped with a warning rather than enforced.
+
+### More than one person
+
+`.github/allowed_signers` takes as many principals as your team has. Every key on the list
+counts as trusted, and the authorship frontier is a single shared SHA: it says "from this
+commit on, everybody signs", not "this person signs".
+
+**The limit, stated plainly:** by default the `Signer` column is free text, and the
+validator does not check it against the key that actually signed. A row saying `ana` whose
+commit was signed with `bruno`'s key passes. What the check proves is that *a trusted key*
+signed the commit the row points at — not which of them.
+
+If you need that, a third optional file closes it:
+
+```
+governance/chaves-de-assinatura.txt
+```
+
+Each line is either `assinante <name in the Signer column> <principal in allowed_signers>`
+or `maquina <principal>`. With it declared, a row whose signer does not match the principal
+that signed its commit **fails**, and so does any decision signed by a key marked `maquina`
+— the key an automated agent uses for draft work, which must never sign a decision. A
+signer name absent from the file **warns** and does not fail, so free-text names keep
+working. Absent the file, nothing changes.
+
+### Squash, rebase, and the two things that break
+
+This layer rests on two facts git keeps: a trailer in a commit message, and a SHA that
+resolves. Both are rewritable, and rewriting them is routine on most teams.
+
+**Squash merge drops the trailer.** A squash builds a new message; whatever survives from
+the branch commits lands in the body rather than as a trailer, and is editable by whoever
+presses the button. A `Decision:` line written in a branch commit may simply not exist in
+the merged history. If your team squashes, put the trailer in the squash message itself —
+that is the commit the record will have to answer for. Merge commits and rebase-and-merge
+preserve the original messages, and are the safer default here.
+
+**Rebase rewrites the SHA you already signed.** The signature column holds the SHA of the
+commit where a human approved the decision. Rebasing that commit — or anything before it —
+produces a new SHA, and the old one survives only in your local object store. Somebody
+cloning the repository gets a row pointing at a commit that does not exist for them, and
+the validator fails, correctly.
+
+The practice that avoids it: **sign a decision on a commit that is already on the main
+branch, and never rewrite that branch.** Approve first, cite afterwards.
+
+What to do when it happens anyway is not settled here, and we would rather say so than ship
+a rule we have not decided. The row is signed, and signed rows are not edited; but the SHA
+it carries no longer resolves. Both cannot stay true. Until that is decided, the honest
+move is a new row that supersedes the broken one, with the reason written down.
 
 ## Setup prompt
 

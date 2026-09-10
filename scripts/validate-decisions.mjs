@@ -7,12 +7,16 @@
 // amparada por qual decisão, e quem assinou?". Lê o trailer `Decision: DEC-NNN`
 // das mensagens de commit e confronta com governance/registro-decisoes.md.
 //
-// Reprova em quatro casos:
+// Reprova em seis casos:
 //   1. o commit cita um DEC que não existe na tabela
 //   2. o DEC existe mas não tem assinante
 //   3. o DEC tem SHA de assinatura que não resolve nesta árvore
 //   4. a instância declarou governance/exigencia-de-chave.txt e a assinatura
 //      de um DEC vigente não tem chave confiável (%G? = G) — com ou sem fronteira
+//   5. a instância declarou governance/chaves-de-assinatura.txt e a decisão foi
+//      assinada por uma chave marcada ali como de MÁQUINA
+//   6. a mesma declaração existe e o assinante escrito na linha não corresponde
+//      ao principal da chave que de fato assinou o commit
 //
 // Nota de manutenção: as expressões abaixo são LITERAIS de propósito. Montar
 // regex a partir de string já custou um bug silencioso: um validador irmão
@@ -113,6 +117,23 @@ function codigoAssinatura(sha) {
   }
 }
 
+// O principal da chave que assinou o commit — para SSH, o nome pelo qual a
+// chave está listada em .github/allowed_signers. `%G?` responde "a assinatura é
+// boa e de chave confiável?"; `%GS` responde "de QUAL chave?". A segunda
+// pergunta é a que faltava em 2026-09-04: o executor assinou uma decisão com a
+// chave do operador, a assinatura saiu boa, e nenhuma checagem tinha como notar.
+function principalAssinatura(sha) {
+  try {
+    return execFileSync("git", ["-C", ARVORE, "log", "-1", "--format=%GS", sha], {
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .toString()
+      .trim();
+  } catch {
+    return "";
+  }
+}
+
 const EXPLICA = {
   U: "assinatura boa, mas a chave não está na lista de confiança — falta gpg.ssh.allowedSignersFile apontando para .github/allowed_signers, ou a chave não está nele",
   N: "o git não enxergou assinatura nenhuma — o commit não foi assinado, ou o git do ambiente não reconhece este formato de assinatura",
@@ -153,6 +174,98 @@ const exigenciaDoArquivo = () => {
 };
 const DECLARACAO = exigenciaDoArquivo();
 const EXIGE_CHAVE = process.argv.includes("--exigir-chave") || DECLARACAO === TOKEN_EXIGENCIA;
+
+// --- correspondência entre assinante declarado e chave que assinou -----------
+//
+// A camada anterior responde "uma chave confiável assinou?". Esta responde
+// "QUAL chave, e ela é a de quem a linha diz que assinou?". Sem ela, a coluna
+// Assinante é texto livre: uma linha dizendo "operador" cujo commit foi
+// assinado por outra chave da lista de confiança passava sem ruído.
+//
+// Duas diretivas, uma por linha, em governance/chaves-de-assinatura.txt:
+//
+//   assinante <nome exato na coluna Assinante> <principal em allowed_signers>
+//   maquina <principal>
+//
+// `maquina` marca a chave que assina rascunho de trabalho e NUNCA decisão — é o
+// item 1 do ADR-046, e existe para que o defeito de 2026-09-04 (executor
+// assinando decisão com a chave do operador) passe a ter como ser acusado.
+//
+// Pela mesma razão da fronteira e da exigência de chave, o arquivo é de
+// INSTÂNCIA e a allowlist de export não o leva: um principal daqui não existe
+// no repositório de mais ninguém. SEM O ARQUIVO, NADA DISTO RODA e o validador
+// se comporta exatamente como antes — um clone de terceiro não pode nascer
+// vermelho por uma regra que ninguém ali declarou.
+//
+// Assinante ausente do mapa é AVISO, não falha: quem usa nome livre na coluna
+// continua funcionando, e o aviso diz que aquela linha não foi conferida.
+const ARQ_CHAVES = path.resolve(ARVORE, "governance/chaves-de-assinatura.txt");
+const ASSINANTES = new Map();
+const MAQUINAS = new Set();
+const errosDeclaracaoChaves = [];
+let TEM_MAPA_CHAVES = false;
+
+if (fs.existsSync(ARQ_CHAVES)) {
+  TEM_MAPA_CHAVES = true;
+  const linhas = fs
+    .readFileSync(ARQ_CHAVES, "utf8")
+    .split(/\r?\n/)
+    .map((x) => x.trim())
+    .filter((x) => x && !x.startsWith("#"));
+  for (const l of linhas) {
+    const partes = l.split(/\s+/);
+    if (partes[0] === "assinante" && partes.length >= 3) {
+      // O nome pode ter espaços — "Cadu Azeredo" é um assinante, não dois campos.
+      // O principal é sempre o ÚLTIMO campo, e o nome é tudo entre a diretiva e ele.
+      // A primeira versão exigia exatamente 3 campos e reprovava todo nome composto
+      // como declaração mal formada, o que é o oposto do que este arquivo serve.
+      ASSINANTES.set(partes.slice(1, -1).join(" "), partes[partes.length - 1]);
+    } else if (partes[0] === "maquina" && partes.length === 2) {
+      MAQUINAS.add(partes[1]);
+    } else {
+      // Declaração que ninguém entende não pode passar por "não declarada" —
+      // mesma regra do token da exigência de chave.
+      errosDeclaracaoChaves.push(l);
+    }
+  }
+}
+
+let semConferencia = 0;
+
+/**
+ * Confere o principal da chave que assinou contra o que a linha declara.
+ * Devolve null quando não há nada a dizer.
+ * Só é chamada com %G? = G: sem chave confiável não há principal para conferir,
+ * e o caso já é tratado pela camada da exigência de chave.
+ */
+function conferirPrincipal(linha) {
+  if (!TEM_MAPA_CHAVES) return null;
+  const principal = principalAssinatura(linha.assinatura);
+  if (MAQUINAS.has(principal)) {
+    return {
+      falha: true,
+      msg:
+        `assinada pela CHAVE DE MÁQUINA "${principal}" — chave de máquina assina rascunho, nunca decisão ` +
+        `(governance/chaves-de-assinatura.txt). A máquina não assina a decisão que ela mesma executa.`,
+    };
+  }
+  const esperado = ASSINANTES.get(linha.assinante);
+  if (esperado === undefined) {
+    return {
+      falha: false,
+      msg: `assinante "${linha.assinante}" não está em governance/chaves-de-assinatura.txt — a coluna não foi conferida contra a chave`,
+    };
+  }
+  if (principal !== esperado) {
+    return {
+      falha: true,
+      msg:
+        `a linha declara assinante "${linha.assinante}" (chave ${esperado}), mas o commit ${linha.assinatura} ` +
+        `foi assinado por "${principal || "(sem principal)"}". Nome na coluna não é afirmação livre.`,
+    };
+  }
+  return null;
+}
 
 // --- coleta das citações -----------------------------------------------------
 
@@ -226,7 +339,16 @@ for (const { origem, dec } of citacoes) {
   }
   const g = codigoAssinatura(linha.assinatura);
   if (g === "G") {
-    saida.push(`ok          ${origem} cita ${dec} — assinado por ${linha.assinante}, commit assinado por chave confiável`);
+    const conf = conferirPrincipal(linha);
+    if (conf?.falha) {
+      saida.push(`FALHA       ${origem} cita ${dec} — ${conf.msg}`);
+      falhas++;
+    } else if (conf) {
+      saida.push(`aviso       ${origem} cita ${dec} — ${conf.msg}`);
+      semConferencia++;
+    } else {
+      saida.push(`ok          ${origem} cita ${dec} — assinado por ${linha.assinante}, commit assinado por chave confiável`);
+    }
   } else if (EXIGE_CHAVE) {
     saida.push(
       `FALHA       ${origem} cita ${dec} — a assinatura ${linha.assinatura} não tem chave confiável. ` +
@@ -371,6 +493,27 @@ for (const [dec, linha] of registro) {
           `Esta instância exige G na assinatura de decisão (governance/exigencia-de-chave.txt). git %G? = "${g}": ${EXPLICA[g] || "código não reconhecido"}`,
       );
       falhas++;
+    } else {
+      const conf = conferirPrincipal(linha);
+      if (conf?.falha) {
+        saida.push(`FALHA       ${dec} no registro — ${conf.msg}`);
+        falhas++;
+      } else if (conf) {
+        saida.push(`aviso       ${dec} no registro — ${conf.msg}`);
+        semConferencia++;
+      }
+    }
+  } else if (TEM_MAPA_CHAVES && !TEXTO && codigoAssinatura(linha.assinatura) === "G") {
+    // A conferência de principal não depende da exigência de chave: uma
+    // instância pode querer saber QUAL chave assinou sem ainda exigir que haja
+    // uma. Quando não há chave confiável, não há principal a conferir.
+    const conf = conferirPrincipal(linha);
+    if (conf?.falha) {
+      saida.push(`FALHA       ${dec} no registro — ${conf.msg}`);
+      falhas++;
+    } else if (conf) {
+      saida.push(`aviso       ${dec} no registro — ${conf.msg}`);
+      semConferencia++;
     }
   }
 }
@@ -388,6 +531,19 @@ if (EXIGE_CHAVE) {
       (DECLARACAO === TOKEN_EXIGENCIA ? " (governance/exigencia-de-chave.txt)" : " (--exigir-chave)"),
   );
 }
+for (const l of errosDeclaracaoChaves) {
+  saida.push(
+    `FALHA       governance/chaves-de-assinatura.txt tem a linha "${l}", que não é ` +
+      `"assinante <nome> <principal>" nem "maquina <principal>". Declaração que ninguém entende não pode passar por "não declarada".`,
+  );
+  falhas++;
+}
+if (TEM_MAPA_CHAVES) {
+  saida.push(
+    `chaves      esta instância confere o assinante contra a chave (governance/chaves-de-assinatura.txt): ` +
+      `${ASSINANTES.size} assinante(s) mapeado(s), ${MAQUINAS.size} chave(s) de máquina`,
+  );
+}
 
 console.log(`validate-decisions — registro: ${path.relative(RAIZ, REGISTRO)}`);
 // Cuidado com esta mensagem: `saida` só recebe linha de FALHA quando não há
@@ -403,6 +559,12 @@ if (rascunhos) {
   console.log(
     `Aviso: ${rascunhos} decisão(ões) aguardam assinatura do operador. ` +
       `Isto não reprova — mas qualquer commit que cite uma delas reprova, até a linha ganhar assinante e SHA.`,
+  );
+}
+if (semConferencia) {
+  console.log(
+    `Aviso: ${semConferencia} linha(s) têm assinante que não está em governance/chaves-de-assinatura.txt. ` +
+      `Isto NÃO reprova — mas nessas linhas o nome na coluna Assinante não foi conferido contra a chave que assinou.`,
   );
 }
 if (semChave) {

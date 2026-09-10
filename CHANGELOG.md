@@ -4,6 +4,32 @@ Version history of the Brain Framework. Format: [Keep a Changelog](https://keepa
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-10
+
+**Why 0.4.1 and not 0.5.0.** By the criterion written into 0.4.0: a fix is a patch; a new capability, or a change in what the project says it is, is a minor. Nothing here changes the opening line, and the one behavioural addition below is declared by the instance and ships off by default — the same reason the optional key requirement in 0.4.0 was not counted as new capability for versioning. Everything else answers questions the documentation left open. That is a patch.
+
+### Added
+
+- **The decision record can now check the signer against the key that actually signed.** A fourth optional file, `governance/chaves-de-assinatura.txt`, maps a name in the `Signer` column to a principal in `.github/allowed_signers`, and can mark a principal as `maquina` — the key an automated agent uses for draft work. With it declared, a `vigente` row whose signer does not match the principal that signed its commit fails, and so does any decision signed by a machine key; a signer absent from the file warns and does not fail. Without the file, nothing runs and the validator behaves exactly as before. This closes the gap between two claims that were being treated as one: "a trusted key signed" and "the person named on the row signed". Negative tests cover the machine key, the mismatched signer, the unmapped signer, a malformed declaration, and the absence of the file.
+- **Answers to the questions the quickstart never addressed.** Adopting Shizune in a repository that already exists, and which of the two layouts lets the validator read your code history (measured, both invocation paths). What squash merge does to the trailer and what rebase does to a signed SHA — including a plain statement that the repair rule is *not* decided, rather than a rule invented for the occasion. How more than one person shares a frontier and a trust list.
+- **README: does anything leave your machine, what it costs to leave, and what happens if this project stops.** No telemetry, no phone-home, with the `grep` that reproduces it and the one script that does use the network named. Getting out costs one delete. Getting big is honestly unmeasured on a large monorepo, and the number is therefore not published.
+
+### Fixed
+
+- **A signer name with a space in it was read as a malformed declaration.** The parser for `governance/chaves-de-assinatura.txt` required a line to have exactly three fields, so `assinante Cadu Azeredo <principal>` — a perfectly ordinary human name — failed as a declaration nobody could understand, which is the opposite of what that file is for. The principal is now taken as the last field and the name as everything between the directive and it. Found on the first real use of the feature, one commit after shipping it: the first person to write their own name into the column would have hit it. Negative tests cover both the composite name being read and the same name pointed at the wrong key still failing.
+
+### Changed
+
+- **The decision record now says how many states there are.** It described the draft state and the rule that a superseded decision changes status, without ever stating that the set has exactly two members — which left "superseded" looking like it might be a third. It is not: a superseded decision stays `vigente`, and what supersedes it is a new row with a new number.
+- **The language note now covers the validators' output, not just the documents.** The checks print in Brazilian Portuguese, including in your CI log, and they do not consult `LC_ALL` or `LANG` — measured byte-identical under any locale on the public clone at `v0.4.0`. Whether that becomes translated output or a locale layer is open, and the note carries no date, for the same reason the translation note carries none.
+
+### Known and not fixed in this release
+
+Two defects were measured, written down, and deliberately left alone. Shipping a release that quietly carries a known defect is the thing this project exists to catch, so both are named here rather than in an issue nobody reads.
+
+- **`doctor`'s summary line counts `n/a` as passed.** `scripts/doctor.mjs` marks each step `OK`, `n/a` or `FALHA` correctly, but the closing line reads `os N verificadores passaram` using the total, `n/a` included. In a clone of this package two steps have nothing to check and answer `n/a` correctly — the run is **7 `OK` and 2 `n/a`**, measured on `v0.4.0` and unchanged here — and the last line still says nine passed. The `n/a` is not the defect; the summary claiming more than the run did is. Fixing it changes the output of a published command, so it waits on a decision rather than being slipped into a patch. Until then: read the `RESUMO` block, not the last line, and do not quote "N checks passed" without saying where it was measured.
+- **The validators' output does not respect locale.** Named under *Changed* above, and it stays open: the choice between real internationalisation and fixed English is a product decision, not an implementation detail, and either one changes every line a consumer's CI log already matches against.
+
 ## [0.4.0] - 2026-09-09
 
 **Why 0.4.0 and not 0.3.2.** The rule this project wrote for itself in DEC-015, the day 0.3.0 shipped, was "new capability, not a fix". This release does not rest on that rule. The operator does not count the optional key requirement below as new capability for versioning purposes — it is declared by the instance and ships off by default — and the other entries are corrections. What this version marks is the first line of the README. The operator's decision is that **a change in the public category of the project counts as a milestone**: a package whose first claim changed is not the same package with a patch. Written here so the next release has a criterion to read: a fix is a patch; a new capability, or a change in what the project says it is, is a minor.

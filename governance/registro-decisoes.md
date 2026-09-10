@@ -43,6 +43,17 @@ is the exact defect this framework exists to catch.
 4. A `DEC-NNN` present, **outside the draft state**, but with no signer or no resolvable SHA,
    **fails CI**.
 
+## The states — there are two
+
+The `Status` column of a row takes **two** values: `rascunho, assinatura pendente` — the
+draft, which exists and does not count — and `vigente`, which a signer and a SHA turn it
+into.
+
+**Superseding is not a third state.** A superseded decision stays `vigente`: it was taken,
+it held, and this record is history rather than current state. What supersedes it is a new
+row, with a new number, saying what it replaces. The number is the handle, not the status —
+a number, once assigned, is never reassigned (rule 1).
+
 ## The draft state — `rascunho, assinatura pendente`
 
 The machine drafts, the human signs, the SHA activates. A decision is born in the table already,
@@ -102,9 +113,50 @@ above. The frontier is about history; this is about the decision. Declare it the
 signing commits carry a trusted key, and not before — a declared requirement your own rows do
 not meet fails your build, which is the point.
 
+## Optional: check the signer against the key that signed
+
+The layers above answer *"did a trusted key sign?"*. A fourth optional file answers
+*"which key, and is it the one this row says signed?"*:
+
+```
+governance/chaves-de-assinatura.txt
+```
+
+Each useful line is either `assinante <name in the Signer column> <principal in
+allowed_signers>` or `maquina <principal>`. With the file present, a `vigente` row whose
+signer does not match the principal that signed its commit **fails**, and so does any
+decision signed by a key marked `maquina` — the key an automated agent uses for draft work,
+which must never sign a decision. A signer name absent from the file **warns** and does not
+fail, so free-text names keep working. Without the file, none of this runs and the
+validator behaves exactly as it did before.
+
+This exists because "a trusted key signed" and "the person named on the row signed" are
+different claims, and only the first one was ever checked. Declare it the day your
+`Signer` column is meant to be an assertion rather than a label.
+
 One CI detail that costs an afternoon if missed: the frontier check needs history deep enough to
 reach the frontier commit. A shallow clone cannot, and the validator says so rather than passing
 in silence. In GitHub Actions the fix is `fetch-depth: 0` on the checkout step.
+
+## Squash, rebase, and the two things that break
+
+This record rests on two facts git keeps: a trailer in a commit message, and a SHA that
+resolves. Both are rewritable.
+
+**Squash merge drops the trailer.** A squash builds a new message; whatever survives from
+the branch commits lands in the body rather than as a trailer, and is editable by whoever
+presses the button. If your team squashes, put the trailer in the squash message itself —
+that is the commit this record has to answer for.
+
+**Rebase rewrites the SHA you already signed.** Rebasing the signing commit, or anything
+before it, produces a new SHA; the old one survives only in your local object store, and a
+fresh clone gets a row pointing at a commit that does not exist. The practice that avoids
+it: sign on a commit that is already on the main branch, and never rewrite that branch.
+
+What to do when it happens anyway is not settled here, and saying so beats shipping a rule
+nobody decided. The row is signed, and signed rows are not edited; but its SHA no longer
+resolves. Both cannot stay true. Until you decide otherwise, the honest move is a new row
+superseding the broken one, with the reason written down.
 
 ## The record
 

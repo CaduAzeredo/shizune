@@ -206,6 +206,128 @@ try {
   r = rodarSemFixture(bom);
   ok(r.code === 0, "sem o arquivo, a mesma linha volta a passar");
   ok(!/exigência\s+esta instância/.test(r.saida), "não anunciou exigência que não existe");
+
+  console.log("\n[chaves] o assinante escrito na linha é conferido contra a chave que assinou (ADR-046)\n");
+
+  // Ao contrário do bloco da fronteira acima — cuja prova positiva era manual
+  // "porque exigiria chave privada dentro do teste" — aqui as chaves são
+  // geradas dentro da árvore descartável. São duas: uma fazendo o papel do
+  // humano, outra o da máquina. É o único jeito de provar por comando que o
+  // validador distingue QUAL chave assinou, que é o item 2 do ADR-046.
+  //
+  // Se o ambiente não tiver ssh-keygen, ou o git for anterior ao suporte a
+  // assinatura SSH (2.34), o bloco se declara n/a e não reprova: reportar
+  // checagem que não rodou é o defeito que este repositório reporta aos outros.
+  const chavesOk = (() => {
+    try {
+      for (const nome of ["humana", "maquina"]) {
+        execFileSync("ssh-keygen", ["-t", "ed25519", "-f", path.join(tmp, nome), "-N", "", "-C", `${nome}@teste`, "-q"], {
+          stdio: "ignore",
+        });
+      }
+      const pub = (n) => fs.readFileSync(path.join(tmp, `${n}.pub`), "utf8").trim();
+      fs.writeFileSync(
+        path.join(tmp, "signers"),
+        `humana@teste ${pub("humana")}\nmaquina@teste ${pub("maquina")}\n`,
+        "utf8",
+      );
+      const p = (x) => path.join(tmp, x).replace(/\\/g, "/");
+      git("config", "gpg.format", "ssh");
+      git("config", "gpg.ssh.allowedSignersFile", p("signers"));
+      git("config", "commit.gpgsign", "true");
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  if (!chavesOk) {
+    console.log("  n/a   ssh-keygen ausente ou git sem suporte a assinatura SSH — bloco não executado");
+  } else {
+    const commitAssinadoCom = (chave, msg) => {
+      git("config", "user.signingkey", path.join(tmp, `${chave}.pub`).replace(/\\/g, "/"));
+      fs.writeFileSync(path.join(tmp, `${chave}-${Date.now()}.txt`), "x\n", "utf8");
+      git("add", "-A");
+      git("commit", "-q", "-m", msg);
+      return execFileSync("git", ["-C", tmp, "rev-parse", "--short", "HEAD"], { encoding: "utf8" }).trim();
+    };
+
+    const shaHumano = commitAssinadoCom("humana", "decisão assinada pelo humano");
+    const shaMaquina = commitAssinadoCom("maquina", "rascunho assinado pela máquina");
+
+    // Guarda: se o git não estiver de fato verificando, nada abaixo prova nada.
+    const gHumano = execFileSync("git", ["-C", tmp, "log", "-1", "--format=%G?%x00%GS", shaHumano], {
+      encoding: "utf8",
+    }).trim();
+    ok(gHumano.startsWith("G\0humana@teste"), `o commit humano verifica como G por humana@teste (git disse "${gHumano.replace("\0", " / ")}")`);
+
+    const fChaves = path.join(dirGov, "chaves-de-assinatura.txt");
+    const declararChaves = (conteudo) => fs.writeFileSync(fChaves, conteudo, "utf8");
+    const MAPA = "assinante operador humana@teste\nmaquina maquina@teste\n";
+
+    // (a) assinante que bate com a chave: passa, e sem aviso
+    declararChaves(MAPA);
+    r = rodarSemFixture(`${CABECALHO}| DEC-001 | 2026-09-01 | ok | vigente | operador | ${shaHumano} |\n`);
+    ok(r.code === 0, "assinante que corresponde à chave passa");
+    ok(/chaves\s+esta instância confere o assinante/.test(r.saida), "anunciou que a conferência de chave está ligada");
+
+    // (b) decisão assinada pela chave de máquina: REPROVA — é o defeito de 04/09
+    r = rodarSemFixture(`${CABECALHO}| DEC-002 | 2026-09-01 | assinada pela máquina | vigente | operador | ${shaMaquina} |\n`);
+    ok(r.code === 1, "decisão assinada pela chave de máquina reprova");
+    ok(/CHAVE DE MÁQUINA/.test(r.saida), "explicou que quem assinou foi a chave de máquina");
+
+    // (c) rascunho assinado pela chave de máquina: NÃO reprova. A chave de
+    // máquina existe justamente para assinar rascunho de trabalho.
+    r = rodarSemFixture(
+      `${CABECALHO}| DEC-003 | 2026-09-01 | rascunho da máquina | rascunho, assinatura pendente |  |  |\n`,
+    );
+    ok(r.code === 0, "rascunho não é alcançado pela regra da chave de máquina");
+
+    // (d) assinante declarado que NÃO bate com a chave que assinou: reprova
+    declararChaves("assinante operador maquina@teste\nmaquina outra@teste\n");
+    r = rodarSemFixture(`${CABECALHO}| DEC-004 | 2026-09-01 | nome não bate | vigente | operador | ${shaHumano} |\n`);
+    ok(r.code === 1, "assinante declarado que não corresponde à chave reprova");
+    ok(/declara assinante "operador"/.test(r.saida), "disse qual nome a linha declarava");
+    ok(/assinado por "humana@teste"/.test(r.saida), "disse qual chave de fato assinou");
+
+    // (e) assinante fora do mapa: AVISA e não reprova — nome livre continua valendo
+    declararChaves(MAPA);
+    r = rodarSemFixture(`${CABECALHO}| DEC-005 | 2026-09-01 | nome livre | vigente | fulano | ${shaHumano} |\n`);
+    ok(r.code === 0, "assinante fora do mapa não reprova");
+    ok(/não está em governance\/chaves-de-assinatura\.txt/.test(r.saida), "avisou que aquela linha não foi conferida");
+
+    // (e2) o nome do assinante pode ter espaços. "Cadu Azeredo" é um assinante,
+    // não dois campos — e a primeira versão do parser exigia exatamente três
+    // campos, o que reprovava todo nome composto como declaração mal formada.
+    // O principal é sempre o último campo.
+    declararChaves("assinante Nome Composto Do Assinante humana@teste\nmaquina maquina@teste\n");
+    r = rodarSemFixture(
+      `${CABECALHO}| DEC-005 | 2026-09-01 | nome com espaços | vigente | Nome Composto Do Assinante | ${shaHumano} |\n`,
+    );
+    ok(r.code === 0, "assinante com nome composto é lido, não reprova como linha mal formada");
+    ok(!/não está em governance/.test(r.saida), "e foi de fato conferido contra a chave, não apenas ignorado");
+
+    // O mesmo nome composto, apontado para a chave ERRADA, ainda tem de reprovar:
+    // ler o nome direito não pode virar desculpa para não conferir.
+    declararChaves("assinante Nome Composto Do Assinante maquina@teste\nmaquina outra@teste\n");
+    r = rodarSemFixture(
+      `${CABECALHO}| DEC-006 | 2026-09-01 | nome composto, chave errada | vigente | Nome Composto Do Assinante | ${shaHumano} |\n`,
+    );
+    ok(r.code === 1, "nome composto apontado para a chave errada continua reprovando");
+
+    // (f) declaração mal formada não passa por "não declarada"
+    declararChaves("confere aí as chaves\n");
+    r = rodarSemFixture(`${CABECALHO}| DEC-006 | 2026-09-01 | ok | vigente | operador | ${shaHumano} |\n`);
+    ok(r.code === 1, "linha ininteligível no arquivo de chaves reprova");
+    ok(/não é "assinante/.test(r.saida), "explicou qual é o formato esperado");
+
+    // (g) sem o arquivo, tudo volta ao comportamento anterior — é o que impede
+    // um clone de terceiro de nascer vermelho por uma regra que não é dele.
+    fs.rmSync(fChaves);
+    r = rodarSemFixture(`${CABECALHO}| DEC-007 | 2026-09-01 | ok | vigente | quem quiser | ${shaHumano} |\n`);
+    ok(r.code === 0, "sem o arquivo, assinante nenhum é conferido e nada reprova");
+    ok(!/chaves\s+esta instância/.test(r.saida), "não anunciou conferência que não existe");
+  }
 } finally {
   try {
     fs.rmSync(tmp, { recursive: true, force: true });
