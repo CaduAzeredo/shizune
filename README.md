@@ -8,7 +8,7 @@ Give a coding agent trustworthy context, a named skill pipeline and verifiable w
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Checks](https://github.com/CaduAzeredo/shizune/actions/workflows/ci.yml/badge.svg)](https://github.com/CaduAzeredo/shizune/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/CaduAzeredo/shizune?display_name=tag&sort=semver)](https://github.com/CaduAzeredo/shizune/releases/latest)
+[![Release](https://img.shields.io/badge/release-latest-blue.svg)](https://github.com/CaduAzeredo/shizune/releases/latest)
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen.svg)](#quickstart)
 [![Website](https://img.shields.io/badge/site-shizune.dev-3fa372.svg)](https://shizune.dev)
 
@@ -17,6 +17,14 @@ Give a coding agent trustworthy context, a named skill pipeline and verifiable w
 **[shizune.dev](https://shizune.dev)** · [Quickstart](QUICKSTART.md) · [Discussions](https://github.com/CaduAzeredo/shizune/discussions)
 
 </div>
+
+## Check it in a minute
+
+```bash
+git clone https://github.com/CaduAzeredo/shizune.git && cd shizune
+git checkout "$(git tag --sort=-v:refname | head -1)"
+bun scripts/test-validate-decisions.mjs
+```
 
 ## Quickstart
 
@@ -32,7 +40,7 @@ Then fill in `projects/my-project/CONTEXT.md`, starting from the `grill-with-doc
 
 **No `bun install`, no `npm install`.** The framework has **zero dependencies**: the scripts use only builtins and there is no `package.json`. That is deliberate — it runs on any machine with a JS runtime, with no install step. You need **Bun** (recommended) or **Node.js 20+**, and **git**.
 
-> **Language, v0.4.** The public surface — this README, the quickstart, the agent contract, the contributing guide and the worked example — is written in English. `skills/` and `templates/` are still in Brazilian Portuguese in this release, and so are the frontmatter field names (`tipo`, `projeto`, `data`, `autor`). Translating them is tracked in the [translation issue](https://github.com/CaduAzeredo/shizune/issues/new?template=translation.yml), and this note carries no date for it: v0.2 promised the translation for "the next release", v0.3 and v0.4 shipped without it, and repeating the promise would be worth less than saying plainly that it is open. Folder and file names are mostly English; a few structural names are still Portuguese (`templates/projeto/`, and the frontmatter fields above), and they are part of the same translation pass. The framework works in either language, and we would rather ship the machinery than hold it back for a translation pass. **The validators also print in Brazilian Portuguese**, which includes the lines your CI log will show: `LC_ALL` and `LANG` are not consulted, and the output is byte-identical under any locale (measured 2026-09-09 on the public clone at `v0.4.0`). Whether that becomes translated output or a real locale layer is an open decision, and this note carries no date for it either.
+> **Language.** This README, the quickstart, the agent contract, the contributing guide and the worked example are in English. `skills/`, `templates/` and the frontmatter field names (`tipo`, `projeto`, `data`, `autor`) are still in Brazilian Portuguese; the translation is tracked in the [translation issue](https://github.com/CaduAzeredo/shizune/issues/new?template=translation.yml), with no date. The validators print in Portuguese. Output follows the code, not your locale; this is listed under "Known and not fixed" in the CHANGELOG.
 
 ## Why it exists
 
@@ -133,7 +141,7 @@ The framework has been used on real client work under NDA. Those engagements are
 
 What is public instead is the complete worked example in [examples/course-platform-demo/](examples/course-platform-demo/): a fictional product taken through the whole journey, from audit to governed dossier — context, domain, a spec with acceptance criteria, two tickets (one of them **deliberately blocked**, because an example that only shows finished work teaches the wrong lesson) and a handoff pair in `.md` and `.json`.
 
-Public evidence on a real open source codebase is planned and has not been produced yet. When it exists, it will be linked here.
+The notes of the [latest release](https://github.com/CaduAzeredo/shizune/releases/latest) cite, next to each number, the command that reproduces it in this repository. The release card attached to the same release, shizune-release.json, records the SHA and the date each claim was measured on.
 
 ## Skill format
 
@@ -172,4 +180,4 @@ Apache License 2.0 grants patent and copyright rights; **section 6 explicitly gr
 
 ## License
 
-Apache License 2.0 — Shizune © 2026 Cadu Azeredo. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Apache License 2.0 — Shizune © 2026 Cadu Azeredo. See [LICENSE](LICENSE) and [NOTICE](NOTICE). The name is not licensed with the code; see "Trademark and naming" above.

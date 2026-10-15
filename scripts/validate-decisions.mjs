@@ -1,7 +1,11 @@
 // validate-decisions.mjs — o CI recusa commit que cita decisão inexistente ou não assinada.
 //
-// uso: node scripts/validate-decisions.mjs [--desde=<ref>] [--registro=<caminho>] [--exigir-chave]
+// uso: node scripts/validate-decisions.mjs [--desde=<ref>] [--registro=<caminho>] [--exigir-chave] [--json]
 //      node scripts/validate-decisions.mjs --texto=<arquivo>   (modo fixture, para teste)
+//
+// --json troca o texto por um objeto { decisoes: [{ id, garantia, sha }], problemas }
+// com cada decisão vigente e a garantia calculada dela (chave, plataforma ou
+// nenhuma). O código de saída é o mesmo do modo texto.
 //
 // Responde por comando à pergunta que o Shizune vende: "esta mudança está
 // amparada por qual decisão, e quem assinou?". Lê o trailer `Decision: DEC-NNN`
@@ -17,6 +21,15 @@
 //      assinada por uma chave marcada ali como de MÁQUINA
 //   6. a mesma declaração existe e o assinante escrito na linha não corresponde
 //      ao principal da chave que de fato assinou o commit
+//   7. a mesma declaração existe e a decisão aponta para um commit criado pelo
+//      GitHub sem a diretiva `plataforma github` para aquele assinante — ou, com
+//      ela, o commit não é merge de dois pais, não verifica pela chave da
+//      plataforma, foi feito por outro e-mail, por um app, ou pelo próprio autor
+//      dos commits do PR
+//   8. a instância declarou governance/delegacoes.txt e uma delegação aponta DEC
+//      inexistente ou em rascunho, um commit declara `Nivel: N0|N1` sem um
+//      `Autorizado-por:` que bata com delegação daquele nível, ou declara
+//      `Nivel: N2`, que não se declara: prova-se pela assinatura
 //
 // Nota de manutenção: as expressões abaixo são LITERAIS de propósito. Montar
 // regex a partir de string já custou um bug silencioso: um validador irmão
@@ -38,9 +51,15 @@ const REGISTRO = path.resolve(RAIZ, arg("registro", "governance/registro-decisoe
 const DESDE = arg("desde", null);
 const TEXTO = arg("texto", null);
 const ARVORE = arg("arvore", RAIZ);
+const SAIDA_JSON = process.argv.includes("--json");
 
 // `Decision: DEC-042` — o trailer, em qualquer lugar da mensagem, case-insensitive
 const RE_TRAILER = /^[ \t]*Decision:[ \t]*(DEC-\d{3,})[ \t]*$/gim;
+// `Nivel: N1` (com ou sem acento) e `Autorizado-por: DEC-042` — trailers de delegação
+const RE_NIVEL = /^[ \t]*N[ií]vel:[ \t]*(\S+)[ \t]*$/gim;
+const RE_AUTORIZADO = /^[ \t]*Autorizado-por:[ \t]*(DEC-\d{3,})[ \t]*$/gim;
+// uma linha de governance/delegacoes.txt: delega N1 <escopo> autorizado_por DEC-042
+const RE_DELEGA = /^delega\s+(N[01])\s+(\S+)\s+autorizado_por\s+(DEC-\d{3,})$/;
 // uma linha da tabela: | DEC-001 | data | decisão | status | assinante | sha |
 const RE_LINHA = /^\|\s*(DEC-\d{3,})\s*\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|/gm;
 
@@ -105,16 +124,29 @@ function shaResolve(sha) {
 // confiança — "alguém assinou", não "o dono do repositório assinou" — e por
 // isso não conta como chave em lugar nenhum deste validador. A primeira versão
 // aceitava U aqui, o que esvaziava a regra na camada que mais importa.
+//
+// As três leituras de commit abaixo guardam o resultado por SHA: o cálculo da
+// garantia relê as mesmas assinaturas que as checagens já leram, e várias linhas
+// do registro costumam apontar o mesmo commit.
+const memoria = new Map();
+const lembrar = (tipo, sha, ler) => {
+  const k = `${tipo}\x00${sha}`;
+  if (!memoria.has(k)) memoria.set(k, ler());
+  return memoria.get(k);
+};
+
 function codigoAssinatura(sha) {
-  try {
-    return execFileSync("git", ["-C", ARVORE, "log", "-1", "--format=%G?", sha], {
-      stdio: ["ignore", "pipe", "ignore"],
-    })
-      .toString()
-      .trim();
-  } catch {
-    return "?";
-  }
+  return lembrar("G?", sha, () => {
+    try {
+      return execFileSync("git", ["-C", ARVORE, "log", "-1", "--format=%G?", sha], {
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .toString()
+        .trim();
+    } catch {
+      return "?";
+    }
+  });
 }
 
 // O principal da chave que assinou o commit — para SSH, o nome pelo qual a
@@ -123,15 +155,17 @@ function codigoAssinatura(sha) {
 // pergunta é a que faltava em 2026-09-04: o executor assinou uma decisão com a
 // chave do operador, a assinatura saiu boa, e nenhuma checagem tinha como notar.
 function principalAssinatura(sha) {
-  try {
-    return execFileSync("git", ["-C", ARVORE, "log", "-1", "--format=%GS", sha], {
-      stdio: ["ignore", "pipe", "ignore"],
-    })
-      .toString()
-      .trim();
-  } catch {
-    return "";
-  }
+  return lembrar("GS", sha, () => {
+    try {
+      return execFileSync("git", ["-C", ARVORE, "log", "-1", "--format=%GS", sha], {
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .toString()
+        .trim();
+    } catch {
+      return "";
+    }
+  });
 }
 
 const EXPLICA = {
@@ -144,6 +178,58 @@ const EXPLICA = {
   R: "assinatura boa, de chave revogada",
   "?": "o commit não pôde ser lido nesta árvore",
 };
+
+// --- commits criados pela plataforma ------------------------------------------
+//
+// O GitHub cria commits em nome de quem aperta o botão: o merge de um PR, o
+// squash, a edição pela web. O committer é o GitHub, com o endereço de noreply
+// da plataforma, e a assinatura é da chave GPG da plataforma, não de uma chave
+// da lista de confiança. Medido numa sonda em 2026-10-14: sem a chave pública da
+// plataforma no gpg do ambiente, o git dá %G? = E; importada sem confiança, U;
+// importada e confiável, G. Por isso a explicação genérica do E (ferramenta
+// ausente) erra o diagnóstico de um merge do GitHub, e esta camada dá a certa.
+//
+// O endereço é montado por partes de propósito: a redação do export barra todo
+// e-mail escrito por extenso num arquivo publicado, e este é o endereço público
+// e genérico da plataforma, não um dado de ninguém.
+const EMAIL_PLATAFORMA = ["noreply", "github.com"].join("@");
+
+function lerCommit(sha) {
+  return lembrar("commit", sha, () => {
+    try {
+      const [ce, pais, ae, an] = execFileSync("git", ["-C", ARVORE, "log", "-1", "--format=%ce%x00%P%x00%ae%x00%an", sha], {
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .toString()
+        .trim()
+        .split("\x00");
+      return { committerEmail: (ce || "").toLowerCase(), pais: pais ? pais.split(" ") : [], autorEmail: ae || "", autorNome: an || "" };
+    } catch {
+      return null;
+    }
+  });
+}
+
+const ehDaPlataforma = (c) => Boolean(c) && c.committerEmail === EMAIL_PLATAFORMA;
+
+const CRIADO_PELO_GITHUB = `o commit foi criado pelo GitHub (committer ${EMAIL_PLATAFORMA})`;
+const POR_QUE_PLATAFORMA = {
+  E:
+    `${CRIADO_PELO_GITHUB} e vem assinado pela chave GPG da plataforma, não por uma chave da lista de confiança. ` +
+    "O git só confere essa assinatura com a chave pública da plataforma importada no gpg do ambiente; sem ela, " +
+    "%G? = E. A instância importa a chave; o pacote não a leva",
+  U:
+    `${CRIADO_PELO_GITHUB} e a chave pública da plataforma está no gpg do ambiente, mas sem confiança; ` +
+    "o git só dá G com a chave importada E marcada como confiável",
+};
+
+/** A explicação de um código %G?, com a causa certa quando o commit é da plataforma. */
+function explicar(g, sha) {
+  if (g !== "G" && ehDaPlataforma(lerCommit(sha))) {
+    return POR_QUE_PLATAFORMA[g] || `${CRIADO_PELO_GITHUB}. ${EXPLICA[g] || "código não reconhecido"}`;
+  }
+  return EXPLICA[g] || "código não reconhecido";
+}
 
 // --- exigência de chave na assinatura de decisão ----------------------------
 //
@@ -199,9 +285,21 @@ const EXIGE_CHAVE = process.argv.includes("--exigir-chave") || DECLARACAO === TO
 //
 // Assinante ausente do mapa é AVISO, não falha: quem usa nome livre na coluna
 // continua funcionando, e o aviso diz que aquela linha não foi conferida.
+//
+// Uma terceira diretiva, DESLIGADA enquanto não for declarada:
+//
+//   plataforma github <nome exato na coluna Assinante> <e-mail de quem faz o merge>
+//
+// Com ela, o merge commit que o GitHub cria quando essa pessoa aperta o botão
+// assina a decisão. Ele prova menos que uma chave: prova que uma credencial com
+// permissão de merge na conta apertou o botão, não que alguém tinha a chave
+// privada. Se a credencial de um agente também consegue fazer merge, ela produz
+// um commit idêntico. Por isso a diretiva só deve ser declarada depois de medir
+// que a credencial do agente NÃO consegue fazer merge no branch protegido.
 const ARQ_CHAVES = path.resolve(ARVORE, "governance/chaves-de-assinatura.txt");
 const ASSINANTES = new Map();
 const MAQUINAS = new Set();
+const PLATAFORMAS = new Map();
 const errosDeclaracaoChaves = [];
 let TEM_MAPA_CHAVES = false;
 
@@ -222,6 +320,9 @@ if (fs.existsSync(ARQ_CHAVES)) {
       ASSINANTES.set(partes.slice(1, -1).join(" "), partes[partes.length - 1]);
     } else if (partes[0] === "maquina" && partes.length === 2) {
       MAQUINAS.add(partes[1]);
+    } else if (partes[0] === "plataforma" && partes[1] === "github" && partes.length >= 4) {
+      // Mesma regra do nome composto: o e-mail é o último campo.
+      PLATAFORMAS.set(partes.slice(2, -1).join(" "), partes[partes.length - 1]);
     } else {
       // Declaração que ninguém entende não pode passar por "não declarada" —
       // mesma regra do token da exigência de chave.
@@ -267,14 +368,156 @@ function conferirPrincipal(linha) {
   return null;
 }
 
+/**
+ * Decide uma linha cuja assinatura aponta para um commit criado pelo GitHub.
+ * Devolve null quando o commit não é da plataforma (ou a instância não tem o
+ * mapa de chaves); senão, { nivel: "ok" | "aviso" | "falha", msg }.
+ */
+function avaliarPlataforma(linha) {
+  if (!TEM_MAPA_CHAVES) return null;
+  const sha = linha.assinatura;
+  const c = lerCommit(sha);
+  if (!ehDaPlataforma(c)) return null;
+  const g = codigoAssinatura(sha);
+  const email = PLATAFORMAS.get(linha.assinante);
+
+  if (email === undefined) {
+    const msg =
+      `o commit ${sha} foi criado pelo GitHub, e merge da plataforma não assina decisão aqui: a diretiva ` +
+      `"plataforma github <assinante> <e-mail>" não está declarada para "${linha.assinante}" em ` +
+      `governance/chaves-de-assinatura.txt. A rota vem desligada de propósito: declare-a só depois de medir que a ` +
+      `credencial do agente não consegue fazer merge no branch protegido (o QUICKSTART mostra como medir).`;
+    if (g === "G") return { nivel: "falha", msg };
+    // Sem G vale a regra de sempre: reprova com a exigência de chave, avisa sem ela.
+    return { nivel: EXIGE_CHAVE ? "falha" : "aviso", msg: `${msg} git %G? = "${g}": ${explicar(g, sha)}` };
+  }
+  if (c.pais.length !== 2) {
+    return {
+      nivel: "falha",
+      msg:
+        `o commit ${sha} foi criado pelo GitHub com ${c.pais.length} pai(s): só o merge commit ("Create a merge commit"), ` +
+        `de dois pais, assina decisão. Squash e rebase não: o commit tem um pai só e a mensagem é editável por quem aperta o botão.`,
+    };
+  }
+  if (g !== "G") {
+    return { nivel: "falha", msg: `o merge do GitHub ${sha} não tem assinatura verificável: git %G? = "${g}": ${explicar(g, sha)}` };
+  }
+  const signatario = principalAssinatura(sha);
+  if (!signatario.toLowerCase().includes(EMAIL_PLATAFORMA)) {
+    return {
+      nivel: "falha",
+      msg: `o commit ${sha} tem committer do GitHub, mas foi assinado por "${signatario}", que não é a chave da plataforma.`,
+    };
+  }
+  if (/\[bot\]/i.test(c.autorEmail) || /\[bot\]/i.test(c.autorNome)) {
+    return {
+      nivel: "falha",
+      msg:
+        `o merge ${sha} foi feito por um app (${c.autorEmail}), não por gente: merge como assinatura de decisão ` +
+        `exige uma pessoa apertando o botão.`,
+    };
+  }
+  if (c.autorEmail.toLowerCase() !== email.toLowerCase()) {
+    return {
+      nivel: "falha",
+      msg: `o merge ${sha} foi feito por ${c.autorEmail}, mas a diretiva declara ${email} para "${linha.assinante}".`,
+    };
+  }
+  let autoresDoPr = [];
+  try {
+    autoresDoPr = execFileSync("git", ["-C", ARVORE, "log", "--format=%ae", `${c.pais[0]}..${c.pais[1]}`], {
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .toString()
+      .split("\n")
+      .map((x) => x.trim().toLowerCase())
+      .filter(Boolean);
+  } catch {
+    return { nivel: "falha", msg: `não foi possível ler os commits do PR que o merge ${sha} trouxe.` };
+  }
+  if (autoresDoPr.includes(c.autorEmail.toLowerCase())) {
+    return {
+      nivel: "falha",
+      msg:
+        `quem fez o merge ${sha} (${c.autorEmail}) também é autor de commit do PR: merge como assinatura exige que ` +
+        `quem aperta o botão não seja quem escreveu.`,
+    };
+  }
+  return {
+    nivel: "ok",
+    msg:
+      `assinado por ${linha.assinante} pelo merge do GitHub ${sha} (diretiva plataforma github): prova a credencial ` +
+      `que fez o merge, não a posse de uma chave`,
+  };
+}
+
+/**
+ * A garantia de uma decisão vigente, calculada do git e nunca escrita à mão:
+ * "chave" (assinatura G pela chave humana declarada), "plataforma" (merge aceito
+ * pela diretiva plataforma github) ou "nenhuma". Não é coluna do registro: um
+ * campo preenchido por pessoa pode mentir, e mudar o formato da tabela quebraria
+ * as instâncias que já existem.
+ */
+function garantiaDe(linha) {
+  if (!linha.assinante || !shaResolve(linha.assinatura)) return "nenhuma";
+  const plat = avaliarPlataforma(linha);
+  if (plat) return plat.nivel === "ok" ? "plataforma" : "nenhuma";
+  if (codigoAssinatura(linha.assinatura) !== "G") return "nenhuma";
+  if (TEM_MAPA_CHAVES) {
+    const principal = principalAssinatura(linha.assinatura);
+    if (MAQUINAS.has(principal)) return "nenhuma";
+    const esperado = ASSINANTES.get(linha.assinante);
+    if (esperado !== undefined && principal !== esperado) return "nenhuma";
+  }
+  return "chave";
+}
+
+// --- delegações N0 e N1 --------------------------------------------------------
+//
+// Os níveis dizem quem pode decidir uma classe de coisa e que rastro isso deixa:
+// N0 (micro, sem rastro por item), N1 (de máquina, commit em branch de rascunho
+// com o trailer de nível) e N2 (humana, linha assinada no registro). N0 e N1 só
+// existem dentro de uma delegação, e a delegação é uma decisão N2 assinada: o
+// arquivo opcional governance/delegacoes.txt diz qual DEC liberou cada classe.
+//
+//   delega N0 <escopo> autorizado_por DEC-NNN
+//   delega N1 <escopo> autorizado_por DEC-NNN
+//
+// O escopo é uma palavra livre; o validador não o interpreta, só confere o
+// vínculo. Como os outros arquivos de instância, ele não vai no pacote, e SEM ELE
+// NADA DISTO RODA: os trailers de nível passam sem conferência.
+const ARQ_DELEGACOES = path.resolve(ARVORE, "governance/delegacoes.txt");
+const DELEGACOES = [];
+const errosDelegacoes = [];
+const TEM_DELEGACOES = fs.existsSync(ARQ_DELEGACOES);
+if (TEM_DELEGACOES) {
+  const linhas = fs
+    .readFileSync(ARQ_DELEGACOES, "utf8")
+    .split(/\r?\n/)
+    .map((x) => x.trim())
+    .filter((x) => x && !x.startsWith("#"));
+  for (const l of linhas) {
+    const m = RE_DELEGA.exec(l);
+    if (m) DELEGACOES.push({ nivel: m[1], escopo: m[2], dec: m[3], linha: l });
+    else errosDelegacoes.push(l);
+  }
+}
+
 // --- coleta das citações -----------------------------------------------------
 
 /** @type {{origem: string, dec: string}[]} */
 const citacoes = [];
+/** @type {{origem: string, niveis: string[], autorizados: string[]}[]} */
+const niveis = [];
+const coletarNiveis = (origem, texto) => {
+  const n = [...texto.matchAll(RE_NIVEL)].map((m) => m[1].toUpperCase());
+  if (n.length) niveis.push({ origem, niveis: n, autorizados: [...texto.matchAll(RE_AUTORIZADO)].map((m) => m[1]) });
+};
 
 if (TEXTO) {
   const t = fs.readFileSync(path.resolve(TEXTO), "utf8");
   for (const m of t.matchAll(RE_TRAILER)) citacoes.push({ origem: path.basename(TEXTO), dec: m[1] });
+  coletarNiveis(path.basename(TEXTO), t);
 } else {
   const faixa = DESDE ? [`${DESDE}..HEAD`] : ["-20"];
   let bruto = "";
@@ -293,6 +536,7 @@ if (TEXTO) {
     for (const m of corpo.matchAll(RE_TRAILER)) {
       citacoes.push({ origem: sha.trim().slice(0, 7), dec: m[1] });
     }
+    coletarNiveis(sha.trim().slice(0, 7), corpo);
   }
 }
 
@@ -337,6 +581,19 @@ for (const { origem, dec } of citacoes) {
     falhas++;
     continue;
   }
+  const plat = avaliarPlataforma(linha);
+  if (plat) {
+    if (plat.nivel === "falha") {
+      saida.push(`FALHA       ${origem} cita ${dec} — ${plat.msg}`);
+      falhas++;
+    } else if (plat.nivel === "aviso") {
+      saida.push(`aviso       ${origem} cita ${dec} — ${plat.msg}`);
+      semChave++;
+    } else {
+      saida.push(`ok          ${origem} cita ${dec} — ${plat.msg}`);
+    }
+    continue;
+  }
   const g = codigoAssinatura(linha.assinatura);
   if (g === "G") {
     const conf = conferirPrincipal(linha);
@@ -352,7 +609,7 @@ for (const { origem, dec } of citacoes) {
   } else if (EXIGE_CHAVE) {
     saida.push(
       `FALHA       ${origem} cita ${dec} — a assinatura ${linha.assinatura} não tem chave confiável. ` +
-        `Esta instância exige G na assinatura de decisão (governance/exigencia-de-chave.txt). git %G? = "${g}": ${EXPLICA[g] || "código não reconhecido"}`,
+        `Esta instância exige G na assinatura de decisão (governance/exigencia-de-chave.txt). git %G? = "${g}": ${explicar(g, linha.assinatura)}`,
     );
     falhas++;
   } else {
@@ -425,7 +682,7 @@ if (!TEXTO && !FRONTEIRA) {
       }
       saida.push(
         `FALHA       commit ${sha} (${autor}) é posterior à fronteira de autoria ${FRONTEIRA} e não tem assinatura confiável. ` +
-          `git %G? = "${g}": ${EXPLICA[g] || "código não reconhecido"}`,
+          `git %G? = "${g}": ${explicar(g, sha)}`,
       );
       falhas++;
     }
@@ -467,6 +724,7 @@ if (!TEXTO && !FRONTEIRA) {
 }
 
 // integridade do próprio registro, independente de haver citação
+let platRegistro = null;
 for (const [dec, linha] of registro) {
   if (ehRascunho(linha)) {
     // Rascunho sem citação é estado legítimo e esperado: é a decisão esperando
@@ -481,6 +739,15 @@ for (const [dec, linha] of registro) {
   } else if (!shaResolve(linha.assinatura)) {
     saida.push(`FALHA       ${dec} no registro — assinatura "${linha.assinatura || "(vazia)"}" não resolve`);
     falhas++;
+  } else if (!TEXTO && (platRegistro = avaliarPlataforma(linha))) {
+    // Commit criado pelo GitHub: a camada da plataforma decide, com ou sem
+    // exigência de chave, porque é ela que sabe o que esse commit prova.
+    if (platRegistro.nivel === "falha") {
+      saida.push(`FALHA       ${dec} no registro — ${platRegistro.msg}`);
+      falhas++;
+    } else if (platRegistro.nivel === "aviso") {
+      saida.push(`aviso       ${dec} no registro — ${platRegistro.msg}`);
+    }
   } else if (EXIGE_CHAVE && !TEXTO) {
     // Com a exigência declarada, a linha vigente é checada mesmo sem citação:
     // uma decisão "assinada" por commit sem chave é o defeito, haja ou não
@@ -490,7 +757,7 @@ for (const [dec, linha] of registro) {
     if (g !== "G") {
       saida.push(
         `FALHA       ${dec} no registro — a assinatura ${linha.assinatura} não tem chave confiável. ` +
-          `Esta instância exige G na assinatura de decisão (governance/exigencia-de-chave.txt). git %G? = "${g}": ${EXPLICA[g] || "código não reconhecido"}`,
+          `Esta instância exige G na assinatura de decisão (governance/exigencia-de-chave.txt). git %G? = "${g}": ${explicar(g, linha.assinatura)}`,
       );
       falhas++;
     } else {
@@ -518,6 +785,76 @@ for (const [dec, linha] of registro) {
   }
 }
 
+// garantia de cada decisão vigente, calculada depois das checagens
+/** @type {{id: string, garantia: string, sha: string}[]} */
+const garantias = [];
+for (const [dec, linha] of registro) {
+  if (ehRascunho(linha)) continue;
+  const garantia = garantiaDe(linha);
+  garantias.push({ id: dec, garantia, sha: linha.assinatura });
+  saida.push(`garantia    ${dec} — ${garantia}${linha.assinatura ? ` (${linha.assinatura})` : ""}`);
+}
+
+// delegações: cada linha aponta uma decisão que existe e está assinada
+if (TEM_DELEGACOES) {
+  for (const d of DELEGACOES) {
+    const alvo = registro.get(d.dec);
+    if (!alvo) {
+      saida.push(`FALHA       delegação "${d.linha}" aponta ${d.dec}, que não existe em ${path.relative(RAIZ, REGISTRO)}`);
+      falhas++;
+    } else if (ehRascunho(alvo)) {
+      saida.push(
+        `FALHA       delegação "${d.linha}" aponta ${d.dec}, que está em rascunho: a delegação é uma decisão N2 ` +
+          `e só vale assinada`,
+      );
+      falhas++;
+    } else if (!alvo.assinante || !shaResolve(alvo.assinatura)) {
+      saida.push(`FALHA       delegação "${d.linha}" aponta ${d.dec}, que não tem assinante e SHA que resolva`);
+      falhas++;
+    }
+  }
+  for (const l of errosDelegacoes) {
+    saida.push(
+      `FALHA       governance/delegacoes.txt tem a linha "${l}", que não é "delega N0|N1 <escopo> autorizado_por DEC-NNN". ` +
+        `Declaração que ninguém entende não pode passar por "não declarada".`,
+    );
+    falhas++;
+  }
+  // commits que declaram nível
+  for (const { origem, niveis: ns, autorizados } of niveis) {
+    for (const n of ns) {
+      if (n === "N2") {
+        saida.push(
+          `FALHA       ${origem} declara Nivel: N2 — N2 não se declara: prova-se pela assinatura da decisão, ` +
+            `uma linha no registro com assinante e SHA`,
+        );
+        falhas++;
+      } else if (n !== "N0" && n !== "N1") {
+        saida.push(`FALHA       ${origem} declara Nivel: ${n}, que não existe — em trailer só se declaram N0 e N1`);
+        falhas++;
+      } else if (!autorizados.length) {
+        saida.push(
+          `FALHA       ${origem} declara Nivel: ${n} sem Autorizado-por: — N0 e N1 só existem dentro de uma ` +
+            `delegação, e o trailer aponta a DEC que a criou`,
+        );
+        falhas++;
+      } else {
+        for (const dec of autorizados) {
+          if (DELEGACOES.some((d) => d.nivel === n && d.dec === dec)) {
+            saida.push(`ok          ${origem} Nivel: ${n} autorizado por ${dec} (delegação declarada)`);
+          } else {
+            saida.push(
+              `FALHA       ${origem} declara Nivel: ${n} com Autorizado-por: ${dec}, mas nenhuma delegação ${n} ` +
+                `em governance/delegacoes.txt aponta ${dec}`,
+            );
+            falhas++;
+          }
+        }
+      }
+    }
+  }
+}
+
 if (DECLARACAO !== null && DECLARACAO !== TOKEN_EXIGENCIA) {
   saida.push(
     `FALHA       governance/exigencia-de-chave.txt existe mas a primeira linha útil é "${DECLARACAO}", ` +
@@ -534,7 +871,8 @@ if (EXIGE_CHAVE) {
 for (const l of errosDeclaracaoChaves) {
   saida.push(
     `FALHA       governance/chaves-de-assinatura.txt tem a linha "${l}", que não é ` +
-      `"assinante <nome> <principal>" nem "maquina <principal>". Declaração que ninguém entende não pode passar por "não declarada".`,
+      `"assinante <nome> <principal>", "maquina <principal>" nem "plataforma github <assinante> <e-mail>". ` +
+      `Declaração que ninguém entende não pode passar por "não declarada".`,
   );
   falhas++;
 }
@@ -543,6 +881,30 @@ if (TEM_MAPA_CHAVES) {
     `chaves      esta instância confere o assinante contra a chave (governance/chaves-de-assinatura.txt): ` +
       `${ASSINANTES.size} assinante(s) mapeado(s), ${MAQUINAS.size} chave(s) de máquina`,
   );
+  saida.push(
+    `plataforma  merge da plataforma como assinatura: ` +
+      (PLATAFORMAS.size
+        ? `ligado para ${PLATAFORMAS.size} assinante(s) (diretiva plataforma github) — prova a credencial que fez o merge, não a posse de uma chave`
+        : `desligado (nenhuma diretiva plataforma github em governance/chaves-de-assinatura.txt)`),
+  );
+}
+saida.push(
+  `níveis      delegações: ` +
+    (TEM_DELEGACOES
+      ? `${DELEGACOES.length} declarada(s) em governance/delegacoes.txt`
+      : `nenhuma declarada (sem governance/delegacoes.txt, os trailers Nivel: e Autorizado-por: não são conferidos)`),
+);
+
+const contar = (tipo) => garantias.filter((x) => x.garantia === tipo).length;
+const semGarantia = contar("nenhuma");
+const linhaGarantia =
+  `garantia: ${contar("chave")} por chave, ${contar("plataforma")} por plataforma` +
+  (semGarantia ? `, ${semGarantia} sem garantia` : "");
+
+// Saída para script: só o objeto, com o mesmo código de saída do modo texto.
+if (SAIDA_JSON) {
+  console.log(JSON.stringify({ decisoes: garantias, problemas: falhas }, null, 2));
+  process.exit(falhas ? 1 : 0);
 }
 
 console.log(`validate-decisions — registro: ${path.relative(RAIZ, REGISTRO)}`);
@@ -555,6 +917,7 @@ console.log(
   `\n${registro.size} decisão(ões) no registro, ${rascunhos} em rascunho, ` +
     `${citacoes.length} citação(ões) em commit, ${falhas} problema(s).`,
 );
+console.log(`${linhaGarantia}.`);
 if (rascunhos) {
   console.log(
     `Aviso: ${rascunhos} decisão(ões) aguardam assinatura do operador. ` +
