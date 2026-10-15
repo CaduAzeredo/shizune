@@ -38,6 +38,8 @@ Mature instances may evolve towards the **orchestrator–subagent** pattern: an 
 4. **Scope isolation per project**: each task operates inside the declared project (canonical slug); no side effects on other projects.
 5. **Secure by default**: never read, display, commit or persist `.env` files, credentials or secrets in logs and documents.
 6. **Epistemic humility**: agents do not fake certainty and do not invent data; gaps and limitations are always stated. Unmeasured marketing or sales numbers are hypotheses to validate, never facts.
+7. **Write files with a write or edit tool, never with a heredoc** (`cat > file <<EOF`, `echo` or `printf` redirected into a file, `Set-Content` with a text body). A heredoc mixes prose with shell syntax in one command, hides the content from review, and breaks on quoting in ways that can look like success. The shell still moves, copies and concatenates files; it never writes their text.
+8. **Read git without leaving locks.** On someone else's disk, read commands (`status`, `log`, `diff`) run with `GIT_OPTIONAL_LOCKS=0`. A read that leaves `.git/index.lock` behind blocks the owner's next commit. If an agent leaves a residue, it says so and asks before deleting it; it never hides it.
 
 ---
 
@@ -98,7 +100,7 @@ Every agent action is classified **before** it runs:
 | Level | Class | Examples | Condition to execute |
 |---|---|---|---|
 | **T1** | Read-only | reading files, `git log`/`git diff`, searches, validators | Free |
-| **T2** | Safe mutation | creating new documents in the authorised scope, editing an artifact of the current round, local commit | Allowed, with a record (conventional commit and/or an entry under `logs/`) |
+| **T2** | Safe mutation | creating new documents in the authorised scope, editing an artifact of the current round, a commit by the agent only to a draft branch, signed with the agent's own machine key — never to the main branch | Allowed, with a record (conventional commit and/or an entry under `logs/`) |
 | **T3** | Sensitive mutation | editing outside the declared scope, writing outside the Shizune root, changing tool configuration | Explicit, prior, case-by-case **[AUTHORIZATION]** from the operator |
 | **T4** | Destructive / production | irreversible deletion or overwrite, any touch on production, financial or client data | **Human-in-the-loop mandatory**: a formal human stop with evidence — never blanket authorisation |
 

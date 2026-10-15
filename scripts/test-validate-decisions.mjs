@@ -207,6 +207,90 @@ try {
   ok(r.code === 0, "sem o arquivo, a mesma linha volta a passar");
   ok(!/exigência\s+esta instância/.test(r.saida), "não anunciou exigência que não existe");
 
+  console.log("\n[garantia] a garantia de cada decisão é calculada do git, nunca escrita à mão\n");
+
+  // Valores: `chave` (G pela chave humana declarada), `plataforma` (merge aceito
+  // pela diretiva) ou `nenhuma`. A garantia não é coluna do registro: um campo
+  // preenchido por pessoa pode mentir, e um derivado do git, não. `--json` dá a
+  // lista por decisão vigente, para script (o livro razão vai ler daí).
+  const json = (s) => {
+    try {
+      return JSON.parse(s);
+    } catch {
+      return null;
+    }
+  };
+  r = rodarSemFixture(bom, "--json");
+  let j = json(r.saida);
+  ok(j !== null && Array.isArray(j.decisoes), "--json devolve um objeto com a lista de decisões");
+  ok(j !== null && j.decisoes.length === 1 && j.decisoes[0].id === "DEC-001" && j.decisoes[0].sha === SHA, "cada decisão vigente traz id e sha");
+  ok(j !== null && j.decisoes[0]?.garantia === "nenhuma", "commit sem chave confiável dá garantia nenhuma");
+  r = rodarSemFixture(bom);
+  ok(/garantia: 0 por chave, 0 por plataforma, 1 sem garantia/.test(r.saida), "o resumo conta a garantia por tipo");
+  r = rodarSemFixture(rascunho, "--json");
+  j = json(r.saida);
+  ok(j !== null && j.decisoes.length === 0, "decisão em rascunho não entra na lista de garantias");
+
+  console.log("\n[delegações] N0 e N1 só existem dentro de uma delegação, e a delegação é decisão assinada\n");
+
+  // governance/delegacoes.txt é opcional e de instância, como o arquivo de chaves.
+  // Cada linha libera uma classe de decisão miúda (N0) ou de máquina (N1) e aponta
+  // a DEC que autorizou a delegação. O commit que usa a classe leva os trailers
+  // `Nivel:` e `Autorizado-por:`. N2 não se declara: prova-se pela assinatura.
+  const fDeleg = path.join(dirGov, "delegacoes.txt");
+  const delegar = (conteudo) => fs.writeFileSync(fDeleg, conteudo, "utf8");
+  const regDeleg =
+    `${CABECALHO}| DEC-001 | 2026-09-01 | delega dependências aprovadas | vigente | operador | ${SHA} |\n` +
+    `| DEC-007 | 2026-09-02 | ainda em rascunho | rascunho, assinatura pendente |  |  |\n`;
+
+  // controle: sem o arquivo, nada muda
+  if (fs.existsSync(fDeleg)) fs.rmSync(fDeleg);
+  r = rodar(regDeleg, "x\n\nNivel: N1\n");
+  ok(r.code === 0, "sem o arquivo de delegações, trailer de nível não reprova");
+  ok(/delegações: nenhuma declarada/.test(r.saida), "anunciou que não há delegação declarada");
+
+  // delegação apontando DEC inexistente
+  delegar("delega N1 dependencias-aprovadas autorizado_por DEC-099\n");
+  r = rodar(regDeleg, "sem trailer\n");
+  ok(r.code === 1, "delegação que aponta DEC inexistente reprova");
+  ok(/DEC-099/.test(r.saida) && /não existe/.test(r.saida), "disse qual DEC da delegação não existe");
+
+  // delegação apontando DEC em rascunho
+  delegar("delega N1 dependencias-aprovadas autorizado_por DEC-007\n");
+  r = rodar(regDeleg, "sem trailer\n");
+  ok(r.code === 1, "delegação que aponta DEC em rascunho reprova");
+  ok(/aponta DEC-007, que está em rascunho/.test(r.saida), "disse que a DEC da delegação ainda não foi assinada");
+
+  // positivo: commit N1 com Autorizado-por que bate com a delegação
+  delegar("# comentário\n\ndelega N1 dependencias-aprovadas autorizado_por DEC-001\ndelega N0 formatacao autorizado_por DEC-001\n");
+  r = rodar(regDeleg, "x\n\nNivel: N1\nAutorizado-por: DEC-001\n");
+  ok(r.code === 0, "commit N1 com Autorizado-por que bate com uma delegação N1 passa");
+  ok(/delegações: 2 declarada/.test(r.saida), "anunciou quantas delegações estão declaradas");
+
+  // commit N1 sem Autorizado-por
+  r = rodar(regDeleg, "x\n\nNivel: N1\n");
+  ok(r.code === 1, "commit N1 sem Autorizado-por reprova");
+  ok(/sem Autorizado-por/.test(r.saida), "disse que falta o Autorizado-por");
+
+  // commit N1 citando DEC que só delega N0
+  delegar("delega N0 formatacao autorizado_por DEC-001\n");
+  r = rodar(regDeleg, "x\n\nNivel: N1\nAutorizado-por: DEC-001\n");
+  ok(r.code === 1, "commit N1 citando DEC que não delega N1 reprova");
+  ok(/nenhuma delegação N1/.test(r.saida), "disse que não há delegação daquele nível para aquela DEC");
+
+  // trailer Nivel: N2
+  r = rodar(regDeleg, "x\n\nNivel: N2\n");
+  ok(r.code === 1, "trailer Nivel: N2 reprova");
+  ok(/N2 não se declara/.test(r.saida), "explicou que N2 se prova pela assinatura, não por trailer");
+
+  // linha mal formada no arquivo
+  delegar("libera tudo\n");
+  r = rodar(regDeleg, "sem trailer\n");
+  ok(r.code === 1, "linha ininteligível no arquivo de delegações reprova");
+  ok(/delega N0\|N1 <escopo> autorizado_por DEC-NNN/.test(r.saida), "explicou o formato esperado");
+
+  fs.rmSync(fDeleg);
+
   console.log("\n[chaves] o assinante escrito na linha é conferido contra a chave que assinou (ADR-046)\n");
 
   // Ao contrário do bloco da fronteira acima — cuja prova positiva era manual
@@ -270,6 +354,11 @@ try {
     r = rodarSemFixture(`${CABECALHO}| DEC-001 | 2026-09-01 | ok | vigente | operador | ${shaHumano} |\n`);
     ok(r.code === 0, "assinante que corresponde à chave passa");
     ok(/chaves\s+esta instância confere o assinante/.test(r.saida), "anunciou que a conferência de chave está ligada");
+    ok(/garantia: 1 por chave, 0 por plataforma/.test(r.saida), "o resumo conta a decisão como garantida por chave");
+    r = rodarSemFixture(`${CABECALHO}| DEC-001 | 2026-09-01 | ok | vigente | operador | ${shaHumano} |\n`, "--json");
+    ok(json(r.saida)?.decisoes?.[0]?.garantia === "chave", "--json dá garantia chave para a decisão assinada pela chave humana declarada");
+    r = rodarSemFixture(`${CABECALHO}| DEC-002 | 2026-09-01 | máquina | vigente | operador | ${shaMaquina} |\n`, "--json");
+    ok(json(r.saida)?.decisoes?.[0]?.garantia === "nenhuma", "decisão assinada pela chave de máquina não ganha garantia");
 
     // (b) decisão assinada pela chave de máquina: REPROVA — é o defeito de 04/09
     r = rodarSemFixture(`${CABECALHO}| DEC-002 | 2026-09-01 | assinada pela máquina | vigente | operador | ${shaMaquina} |\n`);
@@ -327,6 +416,230 @@ try {
     r = rodarSemFixture(`${CABECALHO}| DEC-007 | 2026-09-01 | ok | vigente | quem quiser | ${shaHumano} |\n`);
     ok(r.code === 0, "sem o arquivo, assinante nenhum é conferido e nada reprova");
     ok(!/chaves\s+esta instância/.test(r.saida), "não anunciou conferência que não existe");
+  }
+
+  console.log("\n[plataforma] merge do GitHub como assinatura: só com a diretiva, e só pelo que ele prova\n");
+
+  // A diretiva `plataforma github <assinante> <e-mail>` vem DESLIGADA: sem ela, um
+  // commit criado pela plataforma não assina decisão. Com ela, o merge só vale se
+  // for merge de verdade (dois pais), verificado pela chave da plataforma (G),
+  // feito pelo e-mail declarado, por gente e não por app, e por alguém que não
+  // escreveu os commits do PR. A chave da plataforma é simulada por uma chave gpg
+  // gerada aqui com a identidade da plataforma: nome GitHub e o endereço de
+  // noreply dela. O endereço é montado por partes, como no validador, porque a
+  // redação do export barra todo e-mail escrito por extenso num arquivo publicado.
+  //
+  // Medido numa sonda em 2026-10-14, antes deste teste: sem a chave pública da
+  // plataforma no gpg do ambiente, o git dá %G? = E; importada sem confiança, U;
+  // importada e confiável, G. É por isso que um merge do GitHub dá E por padrão.
+  //
+  // O gpg do Git para Windows lê "C:\..." como caminho relativo; o teste tenta o
+  // caminho nativo e depois a forma "/c/...". Sem gpg que funcione, o bloco se
+  // declara n/a e não reprova.
+  const tmpP = fs.mkdtempSync(path.join(os.tmpdir(), "dec-plataforma-"));
+  const homesGpg = [];
+  const NOREPLY = ["noreply", "github.com"].join("@");
+  try {
+    const gpg = (home, args, input) =>
+      execFileSync("gpg", ["--batch", "--yes", "--pinentry-mode", "loopback", "--passphrase", "", ...args], {
+        env: { ...process.env, GNUPGHOME: home },
+        input,
+        encoding: "utf8",
+        stdio: ["pipe", "pipe", "ignore"],
+      });
+    const casaGpg = (nome) => {
+      const dir = path.join(tmpP, nome);
+      fs.mkdirSync(dir, { recursive: true });
+      for (const h of [dir, dir.replace(/\\/g, "/").replace(/^([A-Za-z]):/, (_, d) => `/${d.toLowerCase()}`)]) {
+        try {
+          gpg(h, ["--list-keys"]);
+          homesGpg.push(h);
+          return h;
+        } catch {
+          /* tenta a outra forma do caminho */
+        }
+      }
+      return null;
+    };
+    const chavePlataforma = (home) => {
+      gpg(home, ["--quick-generate-key", `GitHub <${NOREPLY}>`, "ed25519", "sign", "never"]);
+      return gpg(home, ["--list-keys", "--with-colons"]).split("\n").find((l) => l.startsWith("fpr:")).split(":")[9];
+    };
+
+    let H1 = null;
+    let H2 = null;
+    let H3 = null;
+    let K1 = null;
+    let K2 = null;
+    try {
+      H1 = casaGpg("gpg-ambiente");
+      H2 = casaGpg("gpg-outra");
+      H3 = casaGpg("gpg-vazio");
+      K1 = chavePlataforma(H1);
+      K2 = chavePlataforma(H2);
+      gpg(H1, ["--import-ownertrust"], `${K1}:6:\n`);
+    } catch {
+      K1 = null;
+    }
+
+    if (!H1 || !H2 || !H3 || !K1 || !K2) {
+      console.log("  n/a   gpg ausente ou sem gerar chave neste ambiente — bloco não executado");
+    } else {
+      const repoP = path.join(tmpP, "repo");
+      fs.mkdirSync(repoP);
+      const gitP = (args, env = {}) =>
+        execFileSync("git", ["-C", repoP, ...args], {
+          env: { ...process.env, ...env },
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+        }).trim();
+      const PLATAFORMA = { GIT_COMMITTER_NAME: "GitHub", GIT_COMMITTER_EMAIL: NOREPLY };
+      const autor = (nome, email) => ({ GIT_AUTHOR_NAME: nome, GIT_AUTHOR_EMAIL: email });
+      const assinadoPor = (fpr, home) => [["-c", "gpg.format=openpgp", "-c", `user.signingkey=${fpr}`], { GNUPGHOME: home }];
+
+      gitP(["init", "-q", "-b", "main"]);
+      gitP(["config", "user.name", "base"]);
+      gitP(["config", "user.email", "base@teste"]);
+      gitP(["config", "commit.gpgsign", "false"]);
+      fs.writeFileSync(path.join(repoP, "a.txt"), "a\n", "utf8");
+      gitP(["add", "-A"]);
+      gitP(["commit", "-q", "-m", "base"]);
+      const BASE = gitP(["rev-parse", "--short", "HEAD"]);
+
+      // Um PR por caso: um commit no ramo, depois o merge criado "pela plataforma".
+      const pr = (ramo, autorDoPr, quemFazMerge, fpr, home) => {
+        gitP(["checkout", "-q", "-b", ramo, "main"]);
+        fs.writeFileSync(path.join(repoP, `${ramo.replace("/", "-")}.txt`), `${ramo}\n`, "utf8");
+        gitP(["add", "-A"]);
+        gitP(["commit", "-q", "-m", `trabalho em ${ramo}`], autorDoPr);
+        gitP(["checkout", "-q", "main"]);
+        const [cfg, env] = assinadoPor(fpr, home);
+        gitP([...cfg, "merge", "-q", "--no-ff", "-S", "-m", `Merge pull request from ${ramo}`, ramo], {
+          ...PLATAFORMA,
+          ...quemFazMerge,
+          ...env,
+        });
+        return gitP(["rev-parse", "--short", "HEAD"]);
+      };
+
+      const SHIZUNE = autor("Shizune", "shizune@teste");
+      const PESSOA = autor("Pessoa", "pessoa@teste");
+      const BOT = autor("app[bot]", "1+app[bot]@users.noreply.github.com");
+
+      const M_BOM = pr("preview/bom", SHIZUNE, PESSOA, K1, H1);
+      const M_MESMO_AUTOR = pr("preview/mesmo-autor", PESSOA, PESSOA, K1, H1);
+      const M_CHAVE_FORA = pr("preview/chave-fora", SHIZUNE, PESSOA, K2, H2);
+      const M_BOT = pr("preview/bot", SHIZUNE, BOT, K1, H1);
+      // squash: commit da plataforma com um pai só
+      {
+        const [cfg, env] = assinadoPor(K1, H1);
+        gitP([...cfg, "commit", "-q", "--allow-empty", "-S", "-m", "Squash do PR (#5)"], { ...PLATAFORMA, ...PESSOA, ...env });
+      }
+      const S_SQUASH = gitP(["rev-parse", "--short", "HEAD"]);
+
+      // Guarda: se o git não estiver de fato verificando a assinatura da
+      // plataforma, nada abaixo prova nada.
+      const gBom = execFileSync("git", ["-C", repoP, "log", "-1", "--format=%G?%x00%GS", M_BOM], {
+        env: { ...process.env, GNUPGHOME: H1 },
+        encoding: "utf8",
+      }).trim();
+      ok(gBom.startsWith(`G\0GitHub <${NOREPLY}>`), `o merge simulado verifica como G pela chave da plataforma (git disse "${gBom.replace("\0", " / ")}")`);
+
+      const rodarP = (sha, { chaves, texto, extras = [], home = H1 } = {}) => {
+        const dirGovP = path.join(repoP, "governance");
+        fs.mkdirSync(dirGovP, { recursive: true });
+        const fC = path.join(dirGovP, "chaves-de-assinatura.txt");
+        if (chaves === undefined) {
+          if (fs.existsSync(fC)) fs.rmSync(fC);
+        } else {
+          fs.writeFileSync(fC, chaves, "utf8");
+        }
+        const fR = path.join(tmpP, "reg.md");
+        fs.writeFileSync(fR, `${CABECALHO}| DEC-101 | 2026-10-14 | decisão pelo merge | vigente | Pessoa | ${sha} |\n`, "utf8");
+        const args = [VALIDADOR, `--registro=${fR}`, `--arvore=${repoP}`, ...extras];
+        if (texto) {
+          const fT = path.join(tmpP, "msg.txt");
+          fs.writeFileSync(fT, texto, "utf8");
+          args.push(`--texto=${fT}`);
+        }
+        const rr = spawnSync(process.execPath, args, { encoding: "utf8", env: { ...process.env, GNUPGHOME: home } });
+        return { code: rr.status, saida: (rr.stdout || "") + (rr.stderr || "") };
+      };
+
+      const SEM_DIRETIVA = "assinante Pessoa humana@teste\n";
+      const COM_DIRETIVA = "assinante Pessoa humana@teste\nplataforma github Pessoa pessoa@teste\n";
+      const CITA = "muda coisa\n\nDecision: DEC-101\n";
+
+      // (a) sem a diretiva, o merge da plataforma não assina — mesmo com G
+      r = rodarP(M_BOM, { chaves: SEM_DIRETIVA });
+      ok(r.code === 1, "sem a diretiva, merge do GitHub com G não assina decisão");
+      ok(/plataforma github/.test(r.saida), "disse qual diretiva faltou");
+      ok(/merge da plataforma como assinatura: desligado/.test(r.saida), "anunciou que a rota do merge está desligada");
+
+      // (b) com a diretiva, o merge de verdade, feito por quem a diretiva declara, assina
+      r = rodarP(M_BOM, { chaves: COM_DIRETIVA });
+      ok(r.code === 0, "com a diretiva, o merge feito pelo e-mail declarado assina");
+      ok(/merge da plataforma como assinatura: ligado para 1 assinante/.test(r.saida), "anunciou a rota ligada e para quantos");
+      r = rodarP(M_BOM, { chaves: COM_DIRETIVA, extras: ["--json"] });
+      ok(json(r.saida)?.decisoes?.[0]?.garantia === "plataforma", "o merge aceito pela diretiva dá garantia plataforma");
+      r = rodarP(M_BOM, { chaves: COM_DIRETIVA, texto: CITA });
+      ok(r.code === 0, "um commit pode citar a decisão assinada pelo merge");
+      ok(/cita DEC-101 — assinado por Pessoa pelo merge do GitHub/.test(r.saida), "a citação diz que a assinatura veio do merge, não de chave");
+
+      // (c) o merge foi feito por outro e-mail
+      r = rodarP(M_BOM, { chaves: "assinante Pessoa humana@teste\nplataforma github Pessoa outro@teste\n" });
+      ok(r.code === 1, "merge feito por e-mail diferente do declarado reprova");
+      ok(/pessoa@teste/.test(r.saida) && /outro@teste/.test(r.saida), "disse quem fez o merge e quem a diretiva declara");
+
+      // (d) squash ou rebase: commit da plataforma com um pai só
+      r = rodarP(S_SQUASH, { chaves: COM_DIRETIVA });
+      ok(r.code === 1, "commit da plataforma com um pai só (squash) reprova");
+      ok(/dois pais/.test(r.saida), "explicou que só o merge commit, de dois pais, vale");
+
+      // (e) quem fez o merge também escreveu o PR
+      r = rodarP(M_MESMO_AUTOR, { chaves: COM_DIRETIVA });
+      ok(r.code === 1, "merge feito pelo próprio autor do PR reprova");
+      ok(/também é autor/.test(r.saida), "explicou que quem faz o merge precisa ser outra pessoa");
+
+      // (f) merge assinado por chave que o gpg do ambiente não tem: E
+      r = rodarP(M_CHAVE_FORA, { chaves: COM_DIRETIVA });
+      ok(r.code === 1, "merge que o ambiente não consegue verificar (E) reprova mesmo com a diretiva");
+      ok(/chave pública da plataforma/.test(r.saida), "explicou o E pela chave da plataforma ausente no gpg");
+      ok(!/ssh-keygen/.test(r.saida), "não culpou o ssh-keygen pelo E de um merge do GitHub");
+
+      // (g) sem diretiva e sem exigência de chave, o E não reprova — mas é explicado
+      r = rodarP(M_CHAVE_FORA, { chaves: SEM_DIRETIVA, texto: CITA });
+      ok(r.code === 0, "sem diretiva e sem exigência, a citação de merge com E fica no aviso");
+      ok(/criado pelo GitHub/.test(r.saida) && !/ssh-keygen/.test(r.saida), "explicou por que o merge do GitHub dá E");
+
+      // (h) merge feito por app, não por gente
+      r = rodarP(M_BOT, { chaves: "assinante Pessoa humana@teste\nplataforma github Pessoa 1+app[bot]@users.noreply.github.com\n" });
+      ok(r.code === 1, "merge feito por app reprova mesmo com a diretiva apontando para ele");
+      ok(/feito por um app/.test(r.saida) && /não por gente/.test(r.saida), "disse que quem fez o merge é um app, não uma pessoa");
+
+      // (i) plataforma que o validador não conhece não passa por "não declarada"
+      r = rodarP(M_BOM, { chaves: "assinante Pessoa humana@teste\nplataforma gitlab Pessoa pessoa@teste\n" });
+      ok(r.code === 1, "diretiva de plataforma desconhecida reprova");
+      ok(/plataforma github <assinante> <e-mail>/.test(r.saida), "explicou o formato aceito");
+
+      // (j) fronteira: commit da plataforma sem chave verificável é explicado pela plataforma
+      r = rodarP(M_BOM, { chaves: COM_DIRETIVA, extras: [`--fronteira=${BASE}`], home: H3 });
+      ok(r.code === 1, "com o gpg sem a chave da plataforma, a fronteira reprova os commits dela");
+      ok(/criado pelo GitHub/.test(r.saida), "a falha da fronteira explica o E pelo commit da plataforma");
+    }
+  } finally {
+    for (const h of homesGpg) {
+      try {
+        execFileSync("gpgconf", ["--kill", "gpg-agent"], { env: { ...process.env, GNUPGHOME: h }, stdio: "ignore" });
+      } catch {
+        /* sem agente para encerrar */
+      }
+    }
+    try {
+      fs.rmSync(tmpP, { recursive: true, force: true });
+    } catch {
+      /* Windows às vezes segura o handle; a pasta é temporária de qualquer jeito */
+    }
   }
 } finally {
   try {

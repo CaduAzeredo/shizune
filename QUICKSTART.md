@@ -152,6 +152,167 @@ a rule we have not decided. The row is signed, and signed rows are not edited; b
 it carries no longer resolves. Both cannot stay true. Until that is decided, the honest
 move is a new row that supersedes the broken one, with the reason written down.
 
+### Delegating small decisions: levels N0 and N1
+
+Not every choice needs a signed row. The levels say who may decide a class of thing, and
+what trace it leaves:
+
+| Level | Example | Who decides | Trace |
+|---|---|---|---|
+| N0, micro | formatting, renaming a local variable, choosing among options already allowed | the agent, or a deterministic rule | none per item; only the delegation that frees the class |
+| N1, machine | picking a library from an approved list, applying an existing policy to a new case | the agent, with its machine key | a commit on a draft branch, with the level trailer |
+| N2, human | architecture, data, money, a rule that becomes code, anything irreversible | the owner | a row in the decision record, signed with the human key (or by the merge, where switched on) |
+
+N0 and N1 exist only inside a delegation, and the delegation is itself an N2 decision,
+signed. An optional file, `governance/delegacoes.txt`, declares it, one line per class:
+
+```
+delega N1 approved-dependencies autorizado_por DEC-012
+```
+
+The scope is a free word with no spaces; the validator does not interpret it, it only checks
+the link. A commit that uses a delegated class carries two trailers: `Nivel: N1` and
+`Autorizado-por: DEC-012`. With the file declared, the validator fails a delegation that
+points at a decision that does not exist or is still a draft; a commit that declares `N0`
+or `N1` without an `Autorizado-por:` matching a delegation of that level; and any commit
+that declares `Nivel: N2`, because N2 is never declared: it is proven by the signature.
+Without the file nothing changes, and the summary says no delegation is declared. Expiry
+dates, quorum and interpreted scopes are not part of this release.
+
+### What backs each decision
+
+For every signed row the validator works out what backs it, and never takes that from the
+table: `chave` (a good signature from the signer's declared human key), `plataforma` (a
+merge accepted by the platform directive further down) or `nenhuma`. The summary prints the
+count, as `garantia: N por chave, M por plataforma`, and the `--json` option prints
+`{ id, garantia, sha }` for each signed decision, for scripts to read:
+
+```bash
+bun scripts/validate-decisions.mjs --json
+```
+
+A field a person fills in can lie; one derived from git cannot. That is also why it is not
+a new column in the record: changing the table's format would break every existing instance
+for no gain.
+
+### Giving an agent its own key
+
+An agent that commits needs a key of its own, never yours. Make one per environment the
+agent runs in (your machine, a cloud runner, a reviewer), so each can be revoked alone:
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_agent_local -C agent-local@machine -N ""
+```
+
+The comment is only a label. What the validator reads is the **principal** the key gets in
+the trust list. Name it so it can never be mistaken for a person (`agent-local@machine`,
+`agent-cloud@machine`, `agent-review@machine`) and declare it in both files:
+
+- `.github/allowed_signers`: the principal, then the public key copied from the `.pub`
+  file, never typed;
+- `governance/chaves-de-assinatura.txt`: `maquina agent-local@machine`.
+
+The key has no passphrase, because the agent cannot type one. That is exactly why it may
+sign draft work and nothing else: a decision signed by a key marked `maquina` fails. Check
+both halves before you rely on it:
+
+```bash
+git -c gpg.format=ssh -c user.signingkey=$HOME/.ssh/id_ed25519_agent_local.pub commit -S -m "draft"
+git log -1 --format='%G? %GS'
+```
+
+The second line must print `G agent-local@machine`. Then point a test decision row at that
+commit and run `bun scripts/validate-decisions.mjs`: it must fail and name the machine key.
+If it passes, the `maquina` line is missing or misspelled. The agent's commits go to draft
+branches only (agent contract, section 7): the main branch belongs to whoever holds the
+human key.
+
+### If a key leaks
+
+1. **Take the key off the trust list** (`.github/allowed_signers`) and off the platform
+   account, in a commit signed by **another** declared human key. If there is no other,
+   generate a new key first, declare it, and sign with it.
+2. **Mark the cut-off date** on the removed line, or on the new one, with `valid-before` or
+   `valid-after`, so the history before it stays verifiable.
+3. **List what the key signed after the probable exposure**:
+   `git log --format='%h %G? %GS %ad' --date=iso`, filtered by the principal, from the
+   estimated date.
+4. **Re-sign or revoke each decision on that list**: a new row in the record for each one
+   that still holds, signed with the new key; the ones that no longer hold are revoked by a
+   new decision.
+5. **Rotate the neighbouring credentials**: the agent's, the CI's and the platform's tokens
+   that lived on the same machine.
+6. **Record the incident as a dated decision**: what leaked, the exposure window, what was
+   re-signed and what was revoked.
+
+The limit, written next to it: with a hardware key (`ed25519-sk` with `verify-required`),
+stealing the file is not enough to sign. Even so, whoever has access to the machine can
+induce the owner to touch the key.
+
+### A merged pull request as a signature (off by default)
+
+When the decision owner merges a pull request on GitHub with **Create a merge commit**,
+GitHub creates that commit and signs it with the platform's own key. Out of the box the
+validator reads it as `E` (cannot check), because the platform's public key is not in your
+environment's `gpg`. Imported but not trusted, it reads `U`; imported and trusted, `G`, and
+the signer shown is GitHub, not a person.
+
+A third directive in `governance/chaves-de-assinatura.txt` lets such a merge sign a decision:
+
+```
+plataforma github <name in the Signer column> <email GitHub records as the merge author>
+```
+
+With it, a commit created by GitHub counts as that signer's decision only if all of this
+holds: it has two parents (squash and rebase are refused: one parent, and a message anyone
+pressing the button can edit); it verifies as `G` against the platform key; its author is
+the declared email, which is the account that pressed merge; that author is a person, not
+an app; and that person wrote none of the pull request's commits. Without the directive, a
+decision pointing at a commit created by GitHub does not count, and the validator says why
+it reads `E` instead of blaming the tooling.
+
+**What it proves is weaker than a key.** A key proves possession of a private key. A
+platform merge proves that a credential with merge rights on that account pressed the
+button. If an agent's credential can also merge, it produces an identical commit, and the
+machine would be signing the decision it executed. That is why the directive ships off.
+Measure before you declare it, with the agent's credential, never yours:
+
+1. Who the credential is: `gh api user --jq '.login, .type'`.
+2. What it may do in the repository: `gh api repos/OWNER/REPO --jq '.permissions'`.
+3. Whether it can bypass the branch rules: `gh api repos/OWNER/REPO/rulesets/RULESET_ID --jq '.current_user_can_bypass'`.
+4. Whether the merge path is open to it: `gh api -X PUT repos/OWNER/REPO/pulls/9999/merge`,
+   against a pull request number that does not exist. A `404` means the request reached
+   GitHub; a permission refusal means it did not.
+
+Declare the directive only if the credential is an identity of its own, with no admin role
+and no bypass, measured in a test repository. Branch rulesets on private repositories need a
+paid GitHub plan; on the free plan, creating one returns `403`.
+
+**Our own measurement said no.** On 2026-10-14, in a public test repository, the agent's
+cloud credential turned out to be the operator's own account, with `admin` permission and
+`current_user_can_bypass = pull_requests_only`, and the merge path answered `404` for a pull
+request that did not exist. A merge by the agent would have been indistinguishable from a
+merge by the operator, so the directive stays off in our instance. For it to ever hold, the
+agent needs an identity of its own (a machine account or an app) that can write to draft
+branches only.
+
+When a measurement says yes, import and trust the platform key in the `gpg` your CI uses,
+then check one existing merge:
+
+```bash
+curl -sL https://github.com/web-flow.gpg -o web-flow.gpg
+gpg --show-keys --with-colons web-flow.gpg | awk -F: '/^fpr:/ {print $10}'
+gpg --import web-flow.gpg
+echo "FINGERPRINT:6:" | gpg --import-ownertrust
+git log -1 --format='%G? %GS %ae' MERGE_SHA
+```
+
+Trust each fingerprint the second line prints, after comparing it with the one GitHub
+publishes. The last line must show `G`, GitHub as the signer, and the email that goes in the
+directive, which is often the account's `users.noreply` address rather than its public one.
+Commits created by GitHub after your authorship frontier need the same imported key, or the
+frontier check fails them with the same explanation.
+
 ## Setup prompt
 
 Paste this prompt into your agent (Claude Code, or equivalent) at the root of Shizune to start a new project:
