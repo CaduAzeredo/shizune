@@ -4,6 +4,16 @@ Version history of the Brain Framework. Format: [Keep a Changelog](https://keepa
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-15
+
+Two fixes to `ficha-release`, the script that writes and checks the release card. No new capability, so a patch.
+
+### Fixed
+
+- **`ficha-release --check` tells a missing `ssh-keygen` apart from a bad signature.** When the tagged commit carries an SSH signature and the program git calls to verify it cannot run, git answers `B`, the same letter as a signature that does not match, and the check used to refuse the card as if the signature were bad. It now looks at what git could not run and says so: "ambiente sem ssh-keygen", with the program it tried (`gpg.ssh.program`, `ssh-keygen` by default) and what to install or point to. A card checked in that environment is still refused, because nothing was verified; only the reason changes. Our own verification of 2026-10-15 got a false `B` this way.
+- **`ficha-release` refuses to write a card from a capture with skipped blocks.** If the negative test prints an `n/a` line, a block did not run (on Windows, for example, outside Git Bash, where `gpg` or `ssh-keygen` is missing), and the captured output would publish an incomplete run as the release's evidence. Generation now stops and names the count of skipped blocks. The 0.5.0 card was generated that way, with one skipped block in the captured output; its numbers are unaffected.
+  - Negative tests: `scripts/test-ficha-release.mjs` goes from 45 to 52 assertions (`bun scripts/test-ficha-release.mjs`). Five of the new ones were written before the fix and fail against the 0.5.0 script: with `gpg.ssh.program` pointed at a program that does not exist, the only problem reported must be the environment, the message must say "ambiente sem ssh-keygen", and it must not say the signature does not match; and a capture with an `n/a` line must be refused at generation, naming the block that did not run. The other two pass on both: the same card passes again once the program is back, and a card saved with a byte-order mark is accepted. 0.5.0 already stripped the mark; the test now pins it, and the code stops writing the invisible character inside a regular expression.
+
 ## [0.5.0] - 2026-10-15
 
 **Why 0.5.0 and not 0.4.2.** By the criterion written into 0.4.0, a fix is a patch and a new capability is a minor. The validator gains three: a merged pull request can sign a decision where the instance says so, small decisions can be delegated by level, and every signed decision now reports what backs it. The `doctor` fix below would have been a patch on its own.

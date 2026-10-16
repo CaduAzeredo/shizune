@@ -154,6 +154,36 @@ function resolverTag(tag, arvore) {
   }
 }
 
+// Sem o programa que confere assinatura SSH, o git responde B ("assinatura
+// ruim") e escreve "cannot spawn" na saída de erro. Medido em 2026-10-15, num
+// ambiente sem ssh-keygen: a conferência levou um B falso, e a mensagem culpava
+// a assinatura. Aqui a saída de erro é lida, e, se ela não disser nada, o
+// programa configurado é posto para rodar. O ambiente só é culpado quando a
+// assinatura é SSH e o programa de fato não roda.
+function verificarAssinatura(arvore, commit) {
+  const r = spawnSync("git", ["-C", arvore, "log", "-1", "--format=%G?", commit], {
+    encoding: "utf8",
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+  });
+  const letra = (r.stdout || "").trim();
+  if (letra === "G") return { letra, semPrograma: false, programa: "" };
+
+  const ssh = git(arvore, "cat-file", "commit", commit).includes("-----BEGIN SSH SIGNATURE-----");
+  let programa = "ssh-keygen";
+  try {
+    programa = git(arvore, "config", "--get", "gpg.ssh.program") || programa;
+  } catch {
+    /* sem configuração: o git usa o ssh-keygen do PATH */
+  }
+  let semPrograma = /cannot spawn/i.test(r.stderr || "");
+  if (ssh && !semPrograma) {
+    // `-?` só imprime o uso e sai: não gera chave nem toca arquivo nenhum.
+    const t = spawnSync(programa, ["-?"], { stdio: "ignore" });
+    semPrograma = Boolean(t.error && t.error.code === "ENOENT");
+  }
+  return { letra, semPrograma: ssh && semPrograma, programa };
+}
+
 function tipoDe(v) {
   if (v === null) return "null";
   if (Array.isArray(v)) return "array";
@@ -252,8 +282,18 @@ function conferirFicha(f, tag, arvore) {
     if (typeof obj.sha === "string" && obj.sha !== commit) {
       problemas.push({ tipo: "sha", caminho: "sha", mensagem: `sha: a ficha diz ${curto(obj.sha)}, a tag ${tag} aponta para ${curto(commit)}` });
     }
-    letra = git(arvore, "log", "-1", "--format=%G?", commit);
-    if (letra !== "G") {
+    const v = verificarAssinatura(arvore, commit);
+    letra = v.letra;
+    if (letra !== "G" && v.semPrograma) {
+      problemas.push({
+        tipo: "ambiente",
+        caminho: "sha",
+        mensagem:
+          `ambiente sem ssh-keygen: o commit da tag (${curto(commit)}) tem assinatura SSH, e o programa ` +
+          `que a confere não roda neste ambiente (${v.programa}). O git responde ${letra}, mas isso não diz ` +
+          "nada sobre a assinatura. Instale o OpenSSH, ou aponte gpg.ssh.program, e confira de novo.",
+      });
+    } else if (letra !== "G") {
       problemas.push({
         tipo: "assinatura",
         caminho: "sha",
@@ -274,7 +314,9 @@ function modoCheck(arquivo, tag, arvore, comoJson) {
   let ficha;
   let r;
   try {
-    ficha = JSON.parse(fs.readFileSync(arquivo, "utf8").replace(/^﻿/, ""));
+    const texto = fs.readFileSync(arquivo, "utf8");
+    // Um BOM no começo não é conteúdo: sai antes da leitura, comparado pelo código.
+    ficha = JSON.parse(texto.charCodeAt(0) === 0xfeff ? texto.slice(1) : texto);
   } catch (e) {
     r = {
       problemas: [{ tipo: "leitura", caminho: "(arquivo)", mensagem: `não deu para ler a ficha como JSON: ${e.message}` }],
@@ -361,6 +403,17 @@ function modoGerar(o, arvore) {
   console.error(`ficha-release: medindo ${o.tag} em ${curto(commit)} (teste negativo e doctor)…`);
   const teste = rodarNoClone(arvore, "test-validate-decisions.mjs");
   if (teste.code !== 0) recusar(`o teste negativo falhou neste commit; release com teste vermelho não ganha ficha.\n${teste.saida}`);
+  // Um bloco que respondeu n/a passou sem rodar. Medido em 2026-10-15: a ficha
+  // da v0.5.0 saiu de um ambiente em que o gpg não gerava chave, e a captura
+  // publicada mostrou 81 asserções numa ficha que afirma 107.
+  const pulados = teste.saida.split("\n").filter((l) => /^\s*n\/a\s/.test(l));
+  if (pulados.length) {
+    recusar(
+      `o teste negativo pulou ${pulados.length} bloco(s) neste ambiente, e uma captura com bloco pulado ` +
+        `não sustenta a contagem de asserções da ficha:\n${pulados.join("\n")}\n` +
+        "Gere a ficha num ambiente em que o gpg e o ssh-keygen funcionem (no Windows, o Git Bash).",
+    );
+  }
   const doctor = rodarNoClone(arvore, "doctor.mjs");
   if (doctor.code !== 0) recusar(`o doctor falhou neste commit; release com doctor vermelho não ganha ficha.\n${doctor.saida}`);
   const resumo = [...doctor.saida.matchAll(/^Resultado: OK — (.+?)\.?[ \t]*$/gm)].pop();

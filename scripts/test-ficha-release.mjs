@@ -157,6 +157,10 @@ try {
     );
     const rTexto = rodar("--check", path.join(tmp, "ficha.json"), "--tag", "v9.9.9");
     ok(rTexto.code === 0 && /Resultado: OK/.test(rTexto.out), "no modo texto, a ficha válida termina em \"Resultado: OK\"");
+    // Editor de Windows grava a marca de ordem de bytes no começo do arquivo. O
+    // caractere entra por código, nunca escrito, para não sumir num editor.
+    r = conferir(String.fromCharCode(0xfeff) + JSON.stringify(valida(), null, 2), "v9.9.9");
+    ok(r.code === 0 && r.problemas.length === 0, "a ficha gravada com BOM passa (código 0)");
 
     console.log("\n[esquema] campo extra, um lugar por vez\n");
 
@@ -263,6 +267,21 @@ try {
     const rVelha = rodar("--check", path.join(tmp, "ficha.json"), "--tag", "v9.9.9");
     ok(/desatualizada/.test(rVelha.out) && /package-files/.test(rVelha.out), "no modo texto, a linha diz desatualizada e nomeia a afirmação");
 
+    console.log("\n[ambiente] sem o programa que confere SSH, a culpa é do ambiente, e não da assinatura\n");
+
+    // Sem o ssh-keygen, o git responde B ("assinatura ruim") e escreve "cannot
+    // spawn" na saída de erro. Medido em 2026-10-15: a verificação daquele dia
+    // levou um B falso por isso. Aqui o programa some por configuração do
+    // repositório de teste, apontada para um caminho que não existe.
+    git("config", "gpg.ssh.program", path.join(tmp, "nao-existe", "ssh-keygen").replace(/\\/g, "/"));
+    r = conferir(valida(), "v9.9.9");
+    ok(so(r, "ambiente"), "sem ssh-keygen, o único problema apontado é do ambiente");
+    ok(/ambiente sem ssh-keygen/.test(r.problemas[0]?.mensagem || ""), 'a mensagem diz "ambiente sem ssh-keygen"');
+    ok(!/não confere/.test(r.saida), "não diz que a assinatura não confere");
+    git("config", "--unset", "gpg.ssh.program");
+    r = conferir(valida(), "v9.9.9");
+    ok(r.code === 0 && r.problemas.length === 0, "com o programa de volta, a mesma ficha passa");
+
     console.log("\n[esquema publicado] --schema imprime o esquema fechado\n");
 
     const rS = spawnSync(process.execPath, [SCRIPT, "--schema"], { encoding: "utf8" });
@@ -321,6 +340,28 @@ try {
 
     r = rodar("--tag", "v9.9.9", "--now", "degrau-inventado", "--date", "2026-10-15");
     ok(r.code === 1 && r.out === "" && /--now tem de ser um dos seis degraus/.test(r.err), "recusou --now que não é um dos seis degraus");
+
+    // A captura que vai para a ficha não pode ter bloco pulado. Medido em
+    // 2026-10-15: a ficha da v0.5.0 foi gerada num ambiente em que o gpg não
+    // gerava chave, o bloco [plataforma] virou n/a, e a captura publicada mostrou
+    // 81 asserções numa ficha que afirma 107. O teste passou, e a ficha saiu.
+    escrever(
+      "scripts/test-validate-decisions.mjs",
+      [
+        'const ok = (c, m) => console.log(c ? `  ok    ${m}` : `  FALHA ${m}`);',
+        'ok(true, "primeira");',
+        'console.log("  n/a   gpg ausente ou sem gerar chave neste ambiente — bloco não executado");',
+        'console.log("\\ntest-validate-decisions: tudo passou.");',
+        "",
+      ].join("\n"),
+    );
+    escrever("CHANGELOG.md", "# Changelog\n\n## [9.9.11] - 2026-10-16\n\n- com bloco pulado\n");
+    git("add", "-A");
+    git("commit", "-q", "-S", "-m", "commit com teste que pula um bloco");
+    git("tag", "v9.9.11");
+    r = rodar("--tag", "v9.9.11", "--now", "forged-attestation", "--date", "2026-10-16");
+    ok(r.code === 1 && r.out === "", "recusou gerar quando o teste negativo pulou um bloco");
+    ok(/n\/a/.test(r.err) && /bloco não executado/.test(r.err), "nomeou o bloco que não rodou");
   }
 } finally {
   try {
