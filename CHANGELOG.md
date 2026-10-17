@@ -4,6 +4,16 @@ Version history of the Brain Framework. Format: [Keep a Changelog](https://keepa
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-17
+
+### Fixed
+
+- **The `v0.6.0` tag shipped without its changelog section and with a stale file tree in the README.** The release copied the package before the changelog and the README tree were updated, so the commit tagged `v0.6.0` lists its changes under "Unreleased", and its README tree shows 78 files where the package has 82. The release card refused that tag for exactly this reason. A published tag is not rewritten, so `v0.6.0` stays as it is, without a release; this release carries the same code with the changelog and the tree corrected, and it is the one with a release card. No code changes.
+
+## [0.6.0] - 2026-10-16
+
+**Why 0.6.0.** The decision check gains two capabilities (a repeated number fails, and a sealed row that changed fails), and the package gains two commands of its own (a pre-flight for a batch of work and a set of lints). By the criterion written into 0.4.0, a new capability is a minor. This is the last release for a while: the next weeks go to showing what exists, not to adding more.
+
 ### Added
 
 - **The decision record refuses a repeated number.** A `DEC-NNN` on more than one row fails, naming the rows, whether or not a commit cites it. Until now the last row won in silence, so a signed row appended under a draft's number made the draft citable without anyone editing the draft. Rule 1 of the record ("a number is never reassigned") is now enforced by the tool.
@@ -12,10 +22,21 @@ Version history of the Brain Framework. Format: [Keep a Changelog](https://keepa
 - **A threat model, `docs/THREAT-MODEL.md`.** What each check proves, with its command, and what none of them proves: human authorship, a wrong decision signed with the right key, a compromised key or runner, a row rewritten together with its seal, and a commit signed by a machine key that adds a signed row.
 - **A succession page, `docs/SUCCESSION.md`.** What happens if the maintainer goes quiet: one maintainer and no successor, where the signing key is published, what the licence already guarantees, and how a fork declares itself a continuation.
 
+- **A pre-flight for a batch of work, `scripts/preflight.mjs`.** Read-only. Before a batch starts, it checks a lane manifest kept in the instance's governance folder or passed with `--manifesto` (no file may belong to two lanes, by file, folder or wildcard), the branch, the SHA of `main`, a clean tree, line endings (`eol=lf` declared and LF in the working copy) and the SHA-256 of every file the lane will touch, and with `--esperado` it checks a guard list in the same format. It exits 1 on any failed check.
+  - Negative tests: `scripts/test-preflight.mjs`, 20 assertions (`node scripts/test-preflight.mjs`). 18 of them were written before the script and failed without it.
+- **Three lints in the `doctor`, `scripts/validate-lints.mjs`, each born from a mistake we made.** `[tabelas]`: a table row must have as many cells as its separator row; a vertical bar inside backticks still splits a cell, and a decision row once stopped being read that way. It is an error in the tables a tool reads and a warning elsewhere. `[export]`: any sentence that says where `export-public.mjs --write` writes must name the destination the code uses, read from the code itself; our own context file said otherwise. `[eol]`: `.gitattributes` must declare `eol=lf` and no blob may carry CRLF, because a line ending changes a file's hash without changing its text. In an exported package it is a note, since the rule belongs to the instance.
+  - Negative tests: `scripts/test-validate-lints.mjs`, 20 assertions (`node scripts/test-validate-lints.mjs`), run against a throwaway tree.
+
+- **A ledger of the work, `scripts/livro.mjs`.** Append-only: one file per actor, one line per event, each line a CloudEvents 1.0 record in canonical JSON (RFC 8785) chained to the previous line by its SHA-256. `append` checks the file as it would be before writing and refuses without touching the disk; `check` recomputes the state from the events; `rebuild` prints it. "Signed" is never an event: it is derived from a commit signed by the human key over the same reviewed SHA. No dependency: git and Node's own crypto.
+  - Negative tests: `scripts/test-livro.mjs`, 43 assertions (`node scripts/test-livro.mjs`).
+- **A nightly round that only reads, `scripts/rodada-noturna.mjs`.** No model, no network, one file written. It refuses to run if the environment has a variable named like a credential or the SSH agent holds a key, reads the state of each declared project without opening blocked ones, runs the `doctor` in a throwaway clone and the ledger check, and writes one recap with every number next to the command that produced it.
+  - Negative tests: `scripts/test-rodada-noturna.mjs`, 30 assertions (`node scripts/test-rodada-noturna.mjs`).
+
 ### Changed
 
 - **The README leads with the decision check.** What the check fails on; a picture of four steps (a draft, a signed and sealed row, the same row edited after signing, a row signed by the agent's key) and one of the ledger catching an edited line, both regenerated from real output; the file tree of the package, generated from the public inventory; and what a signature does not prove. The opening line does not change.
 - **The empty decision record documents the seal**, and its table gains a `Seal` column.
+- **Outside contributions sign off (DCO).** `CONTRIBUTING.md` asks for a `Signed-off-by:` line on every commit from outside the project, explains what it means and what it is not (a statement, not a cryptographic signature), and says an agent cannot sign off for you. The CI does not check it yet.
 
 ## [0.5.1] - 2026-10-15
 
