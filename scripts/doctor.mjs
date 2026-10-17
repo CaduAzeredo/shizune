@@ -70,6 +70,20 @@ const ETAPAS = [
     args: STRICT ? ["--strict"] : [],
   },
   {
+    nome: "lints",
+    descricao: "barra vertical em tabela, destino do export no texto e fim de linha LF",
+    script: "validate-lints.mjs",
+    args: STRICT ? ["--strict"] : [],
+    // Cada lint nasceu de um erro de 2026-10-16; o que cada um cobra, e por
+    // que é erro num lugar e aviso no outro, está no cabeçalho do script.
+  },
+  {
+    nome: "lints (teste negativo)",
+    descricao: "cada lint reprova o erro que o fez nascer — se passar na fixture, está quebrado",
+    script: "test-validate-lints.mjs",
+    args: [],
+  },
+  {
     nome: "export (dry-run)",
     descricao: "allowlist, padrões de redação e inventário do pacote — nunca grava",
     script: "export-public.mjs",
@@ -121,6 +135,39 @@ const ETAPAS = [
     descricao: "a linha final não conta n/a como passou, e o export confere o inventário — se passar na fixture, está quebrado",
     script: "test-doctor.mjs",
     args: [],
+  },
+  {
+    nome: "livro (eventos)",
+    descricao: "os livros razão declarados em governance/livros.txt: bytes, forma canônica, cadeia, atores, transições e projeção",
+    script: "livro.mjs",
+    args: ["check", "--todos"],
+    // Os livros são da instância: o pacote traz a ferramenta, nunca os eventos
+    // de ninguém. Num clone do pacote a etapa é n/a, pelo mesmo marcador do
+    // export. Na origem sem governance/livros.txt, o check diz que não há livro
+    // declarado e passa: é o estado entre a ferramenta chegar e o primeiro livro.
+    soNaOrigem: "README-PUBLICO.md",
+  },
+  {
+    nome: "livro (teste negativo)",
+    descricao: "os vetores do formato v0, o JSON canônico e o CLI do livro — se passar na fixture, está quebrado",
+    script: "test-livro.mjs",
+    args: [],
+  },
+  {
+    nome: "rodada noturna (teste negativo)",
+    descricao: "a rodada recusa credencial à mão, ignora projeto bloqueado e só escreve o recap — se passar na fixture, está quebrada",
+    script: "test-rodada-noturna.mjs",
+    args: [],
+    // O teste monta um Brain de mentira com um doctor falso: a rodada de
+    // verdade nunca roda daqui, e o doctor não chama a si mesmo.
+  },
+  {
+    nome: "pré-voo (teste negativo)",
+    descricao: "o pré-voo de lote reprova pistas sobrepostas, árvore suja, branch e main errados, CRLF e hash divergente",
+    script: "test-preflight.mjs",
+    args: [],
+    // O preflight.mjs em si não roda aqui: ele confere o começo de um lote,
+    // com a branch e o SHA que só o comando do lote sabe.
   },
 ];
 

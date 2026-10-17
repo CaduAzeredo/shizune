@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 696 268" width="696" height="268" role="img" aria-label="the ledger: an edit to an old line breaks the chain">
+  <rect x="0.5" y="0.5" width="695" height="267" rx="10" fill="#0a0e10" stroke="#1e2a2b"/>
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="14">
+  <text x="16" y="30" fill="#dec39c">the ledger: an edit to an old line breaks the chain</text>
+  <line x1="16" y1="40" x2="680" y2="40" stroke="#1e2a2b"/>
+  <text x="16" y="62" fill="#edf2ef" xml:space="preserve"><tspan fill="#3fa372">$ </tspan>node scripts/livro.mjs check demo/ledger</text>
+  <text x="16" y="82" fill="#8a9a92" xml:space="preserve"><tspan>  </tspan>livro — conferência do formato v0</text>
+  <text x="16" y="102" fill="#8a9a92" xml:space="preserve"><tspan>  </tspan>  demo/ledger: 5 evento(s) em 2 arquivo(s); 2 item(ns): 1 a_fazer, 1 revisado</text>
+  <text x="16" y="122" fill="#3fa372" xml:space="preserve"><tspan>  </tspan>livro: Resultado: OK</text>
+  <text x="16" y="142" fill="#8a9a92" xml:space="preserve"><tspan fill="#3fa372">$ </tspan># one letter changed by hand in line 2 of events.agent.jsonl</text>
+  <text x="16" y="162" fill="#edf2ef" xml:space="preserve"><tspan fill="#3fa372">$ </tspan>node scripts/livro.mjs check demo/ledger</text>
+  <text x="16" y="182" fill="#8a9a92" xml:space="preserve"><tspan>  </tspan>livro — conferência do formato v0</text>
+  <text x="16" y="202" fill="#8a9a92" xml:space="preserve"><tspan>  </tspan>  demo/ledger: 5 evento(s) em 2 arquivo(s); 2 item(ns): 1 a_fazer, 1 revisado</text>
+  <text x="16" y="222" fill="#e8776e" xml:space="preserve"><tspan>  </tspan>    ERRO  [L4] events.agent.jsonl:3 — shzprev não é o sha256 da linha 2</text>
+  <text x="16" y="242" fill="#e8776e" xml:space="preserve"><tspan>  </tspan>livro: Resultado: FALHA — 1 problema(s).</text>
+  </g>
+</svg>

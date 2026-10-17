@@ -4,6 +4,19 @@ Version history of the Brain Framework. Format: [Keep a Changelog](https://keepa
 
 ## [Unreleased]
 
+### Added
+
+- **The decision record refuses a repeated number.** A `DEC-NNN` on more than one row fails, naming the rows, whether or not a commit cites it. Until now the last row won in silence, so a signed row appended under a draft's number made the draft citable without anyone editing the draft. Rule 1 of the record ("a number is never reassigned") is now enforced by the tool.
+- **A signed row can carry a seal, and a sealed row that changed fails.** The seal is a seventh cell: `selo:` and 16 hex digits of the SHA-256 of the row's id, decision, status, signer and signature; the date is left out. `node scripts/validate-decisions.mjs --selo=DEC-NNN` prints it when you sign. A sealed row whose text no longer matches fails as changed after it was signed; a signed row without a seal warns. **What it does not do:** the seal lives in the same file as the row, so whoever rewrites both together passes. Binding the seal to the signer's key is open, and the threat model says so.
+  - Negative tests: 15 new assertions in `scripts/test-validate-decisions.mjs`, which goes from 107 to 122 (`bun scripts/test-validate-decisions.mjs`). Ten of them were written before the change and fail against the previous validator.
+- **A threat model, `docs/THREAT-MODEL.md`.** What each check proves, with its command, and what none of them proves: human authorship, a wrong decision signed with the right key, a compromised key or runner, a row rewritten together with its seal, and a commit signed by a machine key that adds a signed row.
+- **A succession page, `docs/SUCCESSION.md`.** What happens if the maintainer goes quiet: one maintainer and no successor, where the signing key is published, what the licence already guarantees, and how a fork declares itself a continuation.
+
+### Changed
+
+- **The README leads with the decision check.** What the check fails on; a picture of four steps (a draft, a signed and sealed row, the same row edited after signing, a row signed by the agent's key) and one of the ledger catching an edited line, both regenerated from real output; the file tree of the package, generated from the public inventory; and what a signature does not prove. The opening line does not change.
+- **The empty decision record documents the seal**, and its table gains a `Seal` column.
+
 ## [0.5.1] - 2026-10-15
 
 Two fixes to `ficha-release`, the script that writes and checks the release card. No new capability, so a patch.

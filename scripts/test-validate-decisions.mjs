@@ -12,6 +12,7 @@
 // existe. Esse erro já foi cometido nesta base uma vez.
 
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -123,6 +124,63 @@ try {
 
   r = rodar(bom, "titulo\n\ndecision:   DEC-001   \n");
   ok(r.code === 0 && /1 citação/.test(r.saida), "aceitou trailer em caixa baixa e com espaços");
+
+  console.log("\n[id repetido] número não se reatribui: o mesmo id em duas linhas reprova\n");
+
+  // Até a 0.5.1, a última linha de um id repetido ganhava em silêncio: uma linha
+  // vigente acrescentada embaixo de um rascunho de mesmo número tornava o
+  // rascunho citável sem ninguém editar o rascunho (a pergunta Q1 da spec do
+  // registro, e o caso b da prova de lacunas de 16/10).
+  r = rodar(
+    `${CABECALHO}| DEC-001 | 2026-09-01 | decisão válida | vigente | operador | ${SHA} |\n| DEC-001 | 2026-09-02 | outra com o mesmo número | vigente | operador | ${SHA} |\n`,
+    "sem citar nada\n",
+  );
+  ok(r.code === 1, "duas linhas DEC-001 reprovam, mesmo sem citação");
+  ok(/DEC-001 aparece em 2 linhas do registro \(linhas 3 e 4\)/.test(r.saida), "disse quantas linhas têm o id e quais são");
+  r = rodar(
+    `${CABECALHO}| DEC-002 | 2026-09-01 | ligar o merge | rascunho, assinatura pendente |  |  |\n| DEC-002 | 2026-09-01 | ligar o merge | vigente | operador | ${SHA} |\n`,
+    "x\n\nDecision: DEC-002\n",
+  );
+  ok(r.code === 1, "um rascunho com uma linha vigente de mesmo id embaixo não vira citável");
+
+  console.log("\n[selo] o hash da linha, guardado na assinatura, reprova a linha que mudou depois\n");
+
+  // O selo é a sétima célula de uma linha assinada: "selo:" e os 16 primeiros
+  // dígitos hexadecimais do sha256 de id|decisão|status|assinante|assinatura, com
+  // as células sem os espaços das pontas. A conta é feita aqui, à parte do
+  // validador, para que o teste confira o formato e não só a ferramenta.
+  const selo = (/** @type {string[]} */ ...celulas) =>
+    `selo:${createHash("sha256").update(celulas.join("|"), "utf8").digest("hex").slice(0, 16)}`;
+  const s1 = selo("DEC-001", "decisão selada", "vigente", "operador", SHA);
+
+  r = rodar(`${CABECALHO}| DEC-001 | 2026-09-01 | decisão selada | vigente | operador | ${SHA} | ${s1} |\n`, "x\n\nDecision: DEC-001\n");
+  ok(r.code === 0, "linha assinada com o selo certo passa");
+  ok(!/sem selo/.test(r.saida), "e não entra no aviso das linhas sem selo");
+
+  r = rodar(`${CABECALHO}| DEC-001 | 2026-09-01 | decisão trocada | vigente | operador | ${SHA} | ${s1} |\n`, "x\n\nDecision: DEC-001\n");
+  ok(r.code === 1, "o texto da decisão mudou depois do selo: reprova");
+  ok(/DEC-001 no registro — a linha mudou depois de assinada/.test(r.saida), "explicou que a linha mudou depois de assinada");
+
+  r = rodar(`${CABECALHO}| DEC-001 | 2026-09-01 | decisão selada | vigente | outra pessoa | ${SHA} | ${s1} |\n`, "sem citar nada\n");
+  ok(r.code === 1, "o assinante mudou depois do selo: reprova, mesmo sem citação");
+
+  r = rodar(`${CABECALHO}| DEC-001 | 2026-09-30 | decisão selada | vigente | operador | ${SHA} | ${s1} |\n`, "sem citar nada\n");
+  ok(r.code === 0, "a data não entra no selo");
+
+  r = rodar(`${CABECALHO}| DEC-001 | 2026-09-01 | decisão selada | vigente | operador | ${SHA} | selo:xyz |\n`, "sem citar nada\n");
+  ok(r.code === 1 && /selo ilegível/.test(r.saida), "selo fora do formato reprova");
+
+  r = rodar(bom, "x\n\nDecision: DEC-001\n");
+  ok(r.code === 0, "linha assinada sem selo continua passando");
+  ok(/1 decisão\(ões\) assinada\(s\) sem selo/.test(r.saida), "mas entra no aviso das linhas sem selo");
+
+  const rs = spawnSync(process.execPath, [VALIDADOR, `--registro=${path.join(tmp, "reg.md")}`, `--arvore=${tmp}`, "--selo=DEC-001"], { encoding: "utf8" });
+  ok(rs.status === 0 && rs.stdout.trim() === selo("DEC-001", "decisão válida", "vigente", "operador", SHA), "--selo=DEC-001 imprime o selo da linha como ela está escrita");
+  const rs2 = spawnSync(process.execPath, [VALIDADOR, `--registro=${path.join(tmp, "reg.md")}`, `--arvore=${tmp}`, "--selo=DEC-999"], { encoding: "utf8" });
+  ok(rs2.status === 1 && /DEC-999 não existe/.test(`${rs2.stdout}${rs2.stderr}`), "--selo de um id que não existe sai com 1");
+
+  r = rodar(`${CABECALHO}| DEC-007 | 2026-09-02 | rascunho | rascunho, assinatura pendente |  |  | selo:0000000000000000 |\n`, "sem citar nada\n");
+  ok(r.code === 0, "rascunho com selo não é conferido: o selo nasce na assinatura");
 
   console.log("\n[fronteira] commit posterior sem assinatura por chave reprova (DEC-007)\n");
 

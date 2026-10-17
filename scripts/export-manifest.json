@@ -55,7 +55,12 @@
     ".github/ISSUE_TEMPLATE/skill_proposal.yml",
     ".github/ISSUE_TEMPLATE/translation.yml",
     ".github/ISSUE_TEMPLATE/config.yml",
-    "docs/assets/pipeline.svg"
+    "docs/assets/pipeline.svg",
+    "docs/assets/decisao.svg",
+    "docs/assets/livro.svg",
+    "docs/assets/shizune-glifo.svg",
+    "docs/THREAT-MODEL.md",
+    "docs/SUCCESSION.md"
   ],
   "strip_frontmatter": [
     "README.md",

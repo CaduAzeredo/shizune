@@ -91,3 +91,23 @@ It runs every checker at once. The structure checker verifies frontmatter, field
 ## 8. Licence
 
 Shizune is distributed under the **Apache License 2.0** ("Shizune © 2026 Cadu Azeredo" — see `LICENSE` and `NOTICE` at the root). Every contribution is accepted under the same licence (**inbound = outbound**): by contributing, you agree to license your contribution under Apache 2.0, with no additional terms.
+
+### Sign-off on every commit (DCO)
+
+Every commit in a contribution from outside the project carries a `Signed-off-by:` line with your name and email, the same ones the commit is authored with:
+
+```
+Signed-off-by: Your Name <your email>
+```
+
+`git commit -s` adds it for you; `git rebase --signoff <base>` adds it to commits you already made.
+
+**What it means.** The line says you agree to the [Developer Certificate of Origin 1.1](https://developercertificate.org/): in short, that you wrote the change or otherwise have the right to submit it under the project's licence, and that you understand the contribution and your sign-off are public and kept for good. There is no separate contributor agreement to sign; the sign-off is the whole of it.
+
+**Why we ask.** "Inbound = outbound" only holds if each change comes with a statement, from a named person, that it can be licensed that way. The DCO makes that statement per commit, inside the history, where it travels with the change. It is the same idea this project applies to decisions: the record says who stood behind each one.
+
+**What it is not.** A sign-off is a statement, not a cryptographic signature. Anyone can type the line, and the CI can only check that it is there and that it names the commit's author; it cannot prove who typed it. Signing commits with a key (`git commit -S`) is a separate thing, and it is welcome but not required for outside contributions.
+
+**Work written with an AI agent.** The sign-off is a person's statement, and an agent cannot make it. If an agent wrote part of your change, you sign off, which means you have read it and answer for it as if you had written it.
+
+**How it will be checked.** The CI does **not** check sign-offs yet. When the check is switched on, it will be a pull-request job that reads every commit between the base and the head of the pull request and fails when one of them has no `Signed-off-by:` line whose name and email match that commit's author. It will read only the trailers, with git alone, and will need no app, token or write permission. Until then, a pull request without sign-offs gets a request to add them, not a failed build.

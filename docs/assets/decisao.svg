@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 822 628" width="822" height="628" role="img" aria-label="a commit cites a decision: draft, signed, edited after signing, signed by the agent's key">
+  <rect x="0.5" y="0.5" width="821" height="627" rx="10" fill="#0a0e10" stroke="#1e2a2b"/>
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="14">
+  <text x="16" y="30" fill="#dec39c">a commit cites a decision: draft, signed, edited after signing, signed by the agent's key</text>
+  <line x1="16" y1="40" x2="806" y2="40" stroke="#1e2a2b"/>
+  <text x="16" y="62" fill="#8a9a92" xml:space="preserve"><tspan fill="#3fa372">$ </tspan># 1. a commit cites DEC-002 while it is still a draft</text>
+  <text x="16" y="82" fill="#edf2ef" xml:space="preserve"><tspan fill="#3fa372">$ </tspan>node scripts/validate-decisions.mjs</text>
+  <text x="16" y="102" fill="#e8776e" xml:space="preserve"><tspan>  </tspan>FALHA       3e036f1 cita DEC-002 — decisão em RASCUNHO, ainda não assinada. A máquina</text>
+  <text x="16" y="122" fill="#e8776e" xml:space="preserve"><tspan>  </tspan>    rascunha; o commit só pode se apoiar no que o humano assinou.</text>
+  <text x="16" y="142" fill="#8a9a92" xml:space="preserve"><tspan>  </tspan>2 decisão(ões) no registro, 1 em rascunho, 1 citação(ões) em commit, 1 problema(s).</text>
+  <text x="16" y="162" fill="#8a9a92" xml:space="preserve"><tspan>  </tspan>(exit 1)</text>
+  <text x="16" y="182" fill="#8a9a92" xml:space="preserve"><tspan fill="#3fa372">$ </tspan># 2. DEC-002 signed and sealed: its row points to a commit signed by the key declared human</text>
+  <text x="16" y="202" fill="#edf2ef" xml:space="preserve"><tspan fill="#3fa372">$ </tspan>node scripts/validate-decisions.mjs</text>
+  <text x="16" y="222" fill="#3fa372" xml:space="preserve"><tspan>  </tspan>ok          3e036f1 cita DEC-002 — assinado por maintainer, commit assinado por chave</text>
+  <text x="16" y="242" fill="#3fa372" xml:space="preserve"><tspan>  </tspan>    confiável</text>
+  <text x="16" y="262" fill="#8a9a92" xml:space="preserve"><tspan>  </tspan>2 decisão(ões) no registro, 0 em rascunho, 1 citação(ões) em commit, 0 problema(s).</text>
+  <text x="16" y="282" fill="#8a9a92" xml:space="preserve"><tspan>  </tspan>(exit 0)</text>
+  <text x="16" y="302" fill="#8a9a92" xml:space="preserve"><tspan fill="#3fa372">$ </tspan># 3. the text of DEC-002 changed after it was signed, the seal kept</text>
+  <text x="16" y="322" fill="#edf2ef" xml:space="preserve"><tspan fill="#3fa372">$ </tspan>node scripts/validate-decisions.mjs</text>
+  <text x="16" y="342" fill="#e8776e" xml:space="preserve"><tspan>  </tspan>FALHA       DEC-002 no registro — a linha mudou depois de assinada: o selo guardado é</text>
+  <text x="16" y="362" fill="#e8776e" xml:space="preserve"><tspan>  </tspan>    selo:9eeb08791fd01858, e o texto de agora dá selo:b8f408c404f4748a. Linha assinada não</text>
+  <text x="16" y="382" fill="#e8776e" xml:space="preserve"><tspan>  </tspan>    se edita; o que muda vira linha nova, com número novo.</text>
+  <text x="16" y="402" fill="#3fa372" xml:space="preserve"><tspan>  </tspan>ok          3e036f1 cita DEC-002 — assinado por maintainer, commit assinado por chave</text>
+  <text x="16" y="422" fill="#3fa372" xml:space="preserve"><tspan>  </tspan>    confiável</text>
+  <text x="16" y="442" fill="#8a9a92" xml:space="preserve"><tspan>  </tspan>2 decisão(ões) no registro, 0 em rascunho, 1 citação(ões) em commit, 1 problema(s).</text>
+  <text x="16" y="462" fill="#8a9a92" xml:space="preserve"><tspan>  </tspan>(exit 1)</text>
+  <text x="16" y="482" fill="#8a9a92" xml:space="preserve"><tspan fill="#3fa372">$ </tspan># 4. DEC-002 pointed at a commit signed by the key declared as the agent's</text>
+  <text x="16" y="502" fill="#edf2ef" xml:space="preserve"><tspan fill="#3fa372">$ </tspan>node scripts/validate-decisions.mjs</text>
+  <text x="16" y="522" fill="#e8776e" xml:space="preserve"><tspan>  </tspan>FALHA       3e036f1 cita DEC-002 — assinada pela CHAVE DE MÁQUINA &quot;agent&quot; — chave de máquina</text>
+  <text x="16" y="542" fill="#e8776e" xml:space="preserve"><tspan>  </tspan>    assina rascunho, nunca decisão (governance/chaves-de-assinatura.txt). A máquina não</text>
+  <text x="16" y="562" fill="#e8776e" xml:space="preserve"><tspan>  </tspan>    assina a decisão que ela mesma executa.</text>
+  <text x="16" y="582" fill="#8a9a92" xml:space="preserve"><tspan>  </tspan>2 decisão(ões) no registro, 0 em rascunho, 1 citação(ões) em commit, 2 problema(s).</text>
+  <text x="16" y="602" fill="#8a9a92" xml:space="preserve"><tspan>  </tspan>(exit 1)</text>
+  </g>
+</svg>
