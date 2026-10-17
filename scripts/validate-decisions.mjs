@@ -2,6 +2,7 @@
 //
 // uso: node scripts/validate-decisions.mjs [--desde=<ref>] [--registro=<caminho>] [--exigir-chave] [--json]
 //      node scripts/validate-decisions.mjs --texto=<arquivo>   (modo fixture, para teste)
+//      node scripts/validate-decisions.mjs --selo=DEC-NNN       (imprime o selo da linha, para assinar)
 //
 // --json troca o texto por um objeto { decisoes: [{ id, garantia, sha }], problemas }
 // com cada decisão vigente e a garantia calculada dela (chave, plataforma ou
@@ -11,7 +12,7 @@
 // amparada por qual decisão, e quem assinou?". Lê o trailer `Decision: DEC-NNN`
 // das mensagens de commit e confronta com governance/registro-decisoes.md.
 //
-// Reprova em seis casos:
+// Reprova nestes casos:
 //   1. o commit cita um DEC que não existe na tabela
 //   2. o DEC existe mas não tem assinante
 //   3. o DEC tem SHA de assinatura que não resolve nesta árvore
@@ -30,6 +31,14 @@
 //      inexistente ou em rascunho, um commit declara `Nivel: N0|N1` sem um
 //      `Autorizado-por:` que bata com delegação daquele nível, ou declara
 //      `Nivel: N2`, que não se declara: prova-se pela assinatura
+//   9. o mesmo id DEC-NNN aparece em mais de uma linha do registro: número
+//      atribuído não se reatribui, e até aqui a última linha ganhava em silêncio
+//  10. uma linha assinada traz selo (a sétima célula) e o selo não bate com o
+//      texto de agora: a linha mudou depois de assinada. O selo é "selo:" e os 16
+//      primeiros hexadecimais do sha256 de id|decisão|status|assinante|assinatura,
+//      com as células sem os espaços das pontas; --selo=DEC-NNN o calcula. Linha
+//      assinada sem selo só avisa: o selo nasce na assinatura, e as linhas antigas
+//      precisam de migração para ganhá-lo
 //
 // Nota de manutenção: as expressões abaixo são LITERAIS de propósito. Montar
 // regex a partir de string já custou um bug silencioso: um validador irmão
@@ -37,6 +46,7 @@
 // cheio delas. Literal não tem esse modo de falha.
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -60,8 +70,11 @@ const RE_NIVEL = /^[ \t]*N[ií]vel:[ \t]*(\S+)[ \t]*$/gim;
 const RE_AUTORIZADO = /^[ \t]*Autorizado-por:[ \t]*(DEC-\d{3,})[ \t]*$/gim;
 // uma linha de governance/delegacoes.txt: delega N1 <escopo> autorizado_por DEC-042
 const RE_DELEGA = /^delega\s+(N[01])\s+(\S+)\s+autorizado_por\s+(DEC-\d{3,})$/;
-// uma linha da tabela: | DEC-001 | data | decisão | status | assinante | sha |
-const RE_LINHA = /^\|\s*(DEC-\d{3,})\s*\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|/gm;
+// uma linha da tabela: | DEC-001 | data | decisão | status | assinante | sha | [selo |]
+// A sétima célula é opcional e não atravessa a quebra de linha: sem ela, a linha
+// de seis células termina no sexto "|" e a próxima linha não é lida como selo.
+const RE_LINHA = /^\|\s*(DEC-\d{3,})\s*\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|(?:([^|\r\n]*)\|)?/gm;
+const RE_SELO = /^selo:[0-9a-f]{16}$/;
 
 // Blocos de código cercados não são dados: são a documentação do formato.
 // Um registro que ensina "uma linha se parece com isto" dentro de ``` estava
@@ -99,14 +112,33 @@ function lerRegistro(caminho) {
   const texto = foraDeCerca(fs.readFileSync(caminho, "utf8"));
   const mapa = new Map();
   for (const m of texto.matchAll(RE_LINHA)) {
+    const linha = texto.slice(0, m.index).split("\n").length;
+    if (!LINHAS_POR_ID.has(m[1])) LINHAS_POR_ID.set(m[1], []);
+    LINHAS_POR_ID.get(m[1]).push(linha);
+    // A última linha continua sendo a lida, como antes; o id repetido reprova à
+    // parte (caso 9), para que nenhuma das linhas passe calada.
     mapa.set(m[1], {
       data: m[2].trim(),
+      decisao: m[3].trim(),
       status: m[4].trim(),
       assinante: m[5].trim(),
       assinatura: m[6].trim(),
+      selo: (m[7] ?? "").trim(),
+      linha,
     });
   }
   return mapa;
+}
+
+// As linhas do registro em que cada id aparece; mais de uma é o caso 9.
+/** @type {Map<string, number[]>} */
+const LINHAS_POR_ID = new Map();
+
+// O selo de uma linha como ela está escrita (caso 10). A data fica de fora: é
+// metadado da linha, não o que foi decidido nem por quem.
+function seloDa(id, linha) {
+  const conteudo = [id, linha.decisao, linha.status, linha.assinante, linha.assinatura].join("|");
+  return `selo:${createHash("sha256").update(conteudo, "utf8").digest("hex").slice(0, 16)}`;
 }
 
 function shaResolve(sha) {
@@ -503,6 +535,22 @@ if (TEM_DELEGACOES) {
   }
 }
 
+// --- --selo=DEC-NNN: o selo para colar na assinatura -------------------------
+//
+// Assinar é trocar o estado por `vigente`, preencher o assinante e o SHA, e só
+// então pedir o selo: ele cobre o texto da linha já assinada. Sai antes de
+// qualquer conferência, e não lê o histórico.
+const SELO_DE = arg("selo", null);
+if (SELO_DE) {
+  const linha = lerRegistro(REGISTRO).get(SELO_DE);
+  if (!linha) {
+    console.error(`${SELO_DE} não existe em ${path.relative(RAIZ, REGISTRO)}`);
+    process.exit(1);
+  }
+  console.log(seloDa(SELO_DE, linha));
+  process.exit(0);
+}
+
 // --- coleta das citações -----------------------------------------------------
 
 /** @type {{origem: string, dec: string}[]} */
@@ -785,6 +833,44 @@ for (const [dec, linha] of registro) {
   }
 }
 
+// id repetido (caso 9): reprova uma vez por id, com as linhas, haja ou não citação
+for (const [dec, linhas] of LINHAS_POR_ID) {
+  if (linhas.length < 2) continue;
+  const quais = `${linhas.slice(0, -1).join(", ")} e ${linhas.at(-1)}`;
+  saida.push(
+    `FALHA       ${dec} aparece em ${linhas.length} linhas do registro (linhas ${quais}). ` +
+      `Número atribuído não se reatribui: uma decisão nova ganha número novo, e até aqui a última linha valia em silêncio.`,
+  );
+  falhas++;
+}
+
+// selo (caso 10): só a linha assinada; o rascunho ainda não tem o que selar
+let semSelo = 0;
+let selosConferidos = 0;
+for (const [dec, linha] of registro) {
+  if (ehRascunho(linha)) continue;
+  if (!linha.selo) {
+    semSelo++;
+    continue;
+  }
+  if (!RE_SELO.test(linha.selo)) {
+    saida.push(`FALHA       ${dec} no registro — selo ilegível: "${linha.selo}" não é "selo:" seguido de 16 dígitos hexadecimais`);
+    falhas++;
+    continue;
+  }
+  const agora = seloDa(dec, linha);
+  if (agora !== linha.selo) {
+    saida.push(
+      `FALHA       ${dec} no registro — a linha mudou depois de assinada: o selo guardado é ${linha.selo}, ` +
+        `e o texto de agora dá ${agora}. Linha assinada não se edita; o que muda vira linha nova, com número novo.`,
+    );
+    falhas++;
+  } else {
+    selosConferidos++;
+  }
+}
+if (selosConferidos) saida.push(`selo        ${selosConferidos} linha(s) assinada(s) com selo, e o selo confere com o texto`);
+
 // garantia de cada decisão vigente, calculada depois das checagens
 /** @type {{id: string, garantia: string, sha: string}[]} */
 const garantias = [];
@@ -922,6 +1008,12 @@ if (rascunhos) {
   console.log(
     `Aviso: ${rascunhos} decisão(ões) aguardam assinatura do operador. ` +
       `Isto não reprova — mas qualquer commit que cite uma delas reprova, até a linha ganhar assinante e SHA.`,
+  );
+}
+if (semSelo) {
+  console.log(
+    `Aviso: ${semSelo} decisão(ões) assinada(s) sem selo. Isto não reprova — mas uma mudança no texto dessas linhas ` +
+      `passa sem o validador ver. O selo nasce na assinatura: node scripts/validate-decisions.mjs --selo=DEC-NNN.`,
   );
 }
 if (semConferencia) {

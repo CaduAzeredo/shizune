@@ -37,7 +37,8 @@ is the exact defect this framework exists to catch.
 ## Rules
 
 1. A number, once assigned, is **never** reassigned — not even when the decision is superseded.
-   A superseded decision changes `status`, not number.
+   A superseded decision changes `status`, not number. An id on more than one row **fails CI**,
+   whether or not anything cites it.
 2. A commit that changes product behaviour should carry `Decision: DEC-NNN` in its trailer.
 3. A `DEC-NNN` cited by a commit and absent from the table below **fails CI**.
 4. A `DEC-NNN` present, **outside the draft state**, but with no signer or no resolvable SHA,
@@ -158,15 +159,34 @@ nobody decided. The row is signed, and signed rows are not edited; but its SHA n
 resolves. Both cannot stay true. Until you decide otherwise, the honest move is a new row
 superseding the broken one, with the reason written down.
 
+## The seal of a signed row
+
+A signed row may carry a seventh cell, the **seal**: `selo:` and the first 16 hex digits of the
+SHA-256 of the cells id, decision, status, signer and signature, trimmed and joined by `|`. The
+date is not part of it. When a row has a seal and its text no longer matches it, the row changed
+after it was signed, and that **fails CI**. A signed row without a seal only warns.
+
+The seal is written when the row is signed. Set the status to `vigente`, fill in the signer and
+the SHA, and then ask the validator for the seal of the row as it now reads:
+
+```
+node scripts/validate-decisions.mjs --selo=DEC-001
+```
+
+Paste the output into the seventh cell, in the same commit.
+
+What the seal does not do: it lives in the same file as the row, so whoever rewrites the row and
+the seal together passes. It catches an edit that forgot the seal, not one made on purpose.
+
 ## The record
 
-| ID | Date | Decision | Status | Signer | Signature (commit) |
-| :--- | :--- | :--- | :--- | :--- | :--- |
+| ID | Date | Decision | Status | Signer | Signature (commit) | Seal |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 
 Empty, and that is the correct starting state. A row looks like this:
 
 ```
-| DEC-001 | 2026-01-15 | One sentence saying what was decided. | vigente | operador | a1b2c3d |
+| DEC-001 | 2026-01-15 | One sentence saying what was decided. | vigente | operador | a1b2c3d | selo:61498c0f88c92932 |
 ```
 
 Run the validator any time with:
